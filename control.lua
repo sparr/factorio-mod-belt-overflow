@@ -1,5 +1,8 @@
 require "config"
 
+local mod_version="0.0.2"
+local mod_data_version="0.0.2"
+
 termbelts = {}
 curvebelts = {}
 
@@ -24,6 +27,27 @@ local function pos2s(pos)
   return ''
 end
 
+local function rotate_pos(pos,dir)
+  local x,y=pos.x,pos.y
+  if not x then
+    x,y=pos[1],pos[2]
+  end
+  if     dir==defines.direction.north then
+  elseif dir==defines.direction.south then
+    x = -x
+    y = -y
+  elseif dir==defines.direction.east then
+    t = x
+    x = -y
+    y = t
+  elseif dir==defines.direction.west then
+    t = x
+    x = y
+    y = -t
+  end
+  return {x,y,x=x,y=y}
+end
+
 local belt_speeds = {basic=1,fast=2,express=3,faster=4,purple=5}
 
 -- starting_entity is a belt(-like) entity, or a belt combinator
@@ -35,24 +59,16 @@ local function terminal_belt_lines(entity,entity_to_ignore)
     if #entity.neighbours>0 then
       return {}
     else
-      return {3,4}
+      return {1,2,3,4}
     end
   end
   local dir = entity.direction
   local pos = entity.position
   local to_check = {}
   if entity.type=="splitter" then
-    if     dir==defines.direction.north then
-      to_check = {{pos={x=pos.x-0.5,y=pos.y},lines={5,6}},{pos={x=pos.x+0.5,y=pos.y},lines={7,8}}}
-    elseif dir==defines.direction.south then
-      to_check = {{pos={x=pos.x+0.5,y=pos.y},lines={5,6}},{pos={x=pos.x-0.5,y=pos.y},lines={7,8}}}
-    elseif dir==defines.direction.east then
-      to_check = {{pos={x=pos.x,y=pos.y-0.5},lines={5,6}},{pos={x=pos.x,y=pos.y+0.5},lines={7,8}}}
-    elseif dir==defines.direction.west then
-      to_check = {{pos={x=pos.x,y=pos.y+0.5},lines={5,6}},{pos={x=pos.x,y=pos.y-0.5},lines={7,8}}}
-    else
-      debug("invalid direction for splitter entity")
-    end
+    to_check = {
+      {pos=rotate_pos({x=pos.x-0.5,y=pos.y},dir),lines={5,6}},
+      {pos=rotate_pos({x=pos.x+0.5,y=pos.y},dir),lines={7,8}}}
   elseif entity.type=="transport-belt-to-ground" and 
     entity.belt_to_ground_type=="input" then
     to_check = {{pos=pos,lines={3,4}}}
@@ -69,20 +85,8 @@ local function terminal_belt_lines(entity,entity_to_ignore)
     -- following code originally copied from https://github.com/sparr/factorio-mod-belt-combinators
     for _,check in pairs(to_check) do
       debug("checking "..pos2s(check.pos))
-      local tpos = {}
-      if     dir==defines.direction.north then
-        tpos={x=check.pos.x,y=check.pos.y-1}
-      elseif dir==defines.direction.south then
-        tpos={x=check.pos.x,y=check.pos.y+1}
-      elseif dir==defines.direction.east then
-        tpos={x=check.pos.x+1,y=check.pos.y}
-      elseif dir==defines.direction.west then
-        tpos={x=check.pos.x-1,y=check.pos.y}
-      else
-        debug('nil target position')
-        tpos=nil
-      end
-      local entities = game.get_surface(entity.surface.index).find_entities({tpos,tpos})
+      local tpos = rotate_pos({x=check.pos.x,y=check.pos.y-1},dir)
+      local entities = game.get_surface(entity.surface.index).find_entities({{0,0},{0,0}})
       local target = nil
       for _,candidate in pairs(entities) do
         if candidate ~= entity_to_ignore then
@@ -129,40 +133,23 @@ local function terminal_belt_lines(entity,entity_to_ignore)
             if target.type=='transport-belt' then
               local belt_behind_target = false
               -- find a belt-like entity behind the target or on the far side
-              local bpd = {}
-              if     target.direction==defines.direction.north then
-                bpd[1]={pos={target.position.x,target.position.y+1},dir=target.direction}
-              elseif target.direction==defines.direction.south then
-                bpd[1]={pos={target.position.x,target.position.y-1},dir=target.direction}
-              elseif target.direction==defines.direction.east then
-                bpd[1]={pos={target.position.x-1,target.position.y},dir=target.direction}
-              elseif target.direction==defines.direction.west then
-                bpd[1]={pos={target.position.x+1,target.position.y},dir=target.direction}
-              end
-              if     dir==defines.direction.north then
-                bpd[2]={pos={pos.x,pos.y-2},dir=defines.direction.south}
-              elseif dir==defines.direction.south then
-                bpd[2]={pos={pos.x,pos.y+2},dir=defines.direction.north}
-              elseif dir==defines.direction.east  then
-                bpd[2]={pos={pos.x+2,pos.y},dir=defines.direction.east}
-              elseif dir==defines.direction.west  then
-                bpd[2]={pos={pos.x-2,pos.y},dir=defines.direction.west}
-              end
-              if #bpd>0 then
-                for _,bpos in pairs(bpd) do
-                  local entities = game.get_surface(entity.surface.index).find_entities({bpos.pos,bpos.pos})
-                  for _,candidate in pairs(entities) do
-                    if candidate.type == "transport-belt" or
-                      candidate.type == "transport-belt-to-ground" or
-                      candidate.type == "splitter" then
-                      if candidate.direction == bpos.dir then
-                        belt_behind_target = true
-                      end
-                      break
+              local bpd = {
+                {pos=rotate_pos({target.position.x,target.position.y+1},target.direction),dir=target.direction},
+                {pos=rotate_pos({pos.x,pos.y-2},dir),dir=defines.direction.south}
+              }
+              for _,bpos in pairs(bpd) do
+                local entities = game.get_surface(entity.surface.index).find_entities({bpos.pos,bpos.pos})
+                for _,candidate in pairs(entities) do
+                  if candidate.type == "transport-belt" or
+                    candidate.type == "transport-belt-to-ground" or
+                    candidate.type == "splitter" then
+                    if candidate.direction == bpos.dir then
+                      belt_behind_target = true
                     end
+                    break
                   end
-                  if belt_behind_target then break end
                 end
+                if belt_behind_target then break end
               end
               if not belt_behind_target then
                 turn = true
@@ -193,22 +180,23 @@ local function onTick(event)
         else
           local e = belt.entity
           local pos = e.position
+          local line_caps = {}
+          if e.type=="transport-belt" then
+            if curvebelts[pos.y] and curvebelts[pos.y][pos.x]=="right" then
+              line_caps={5,2}
+            elseif curvebelts[pos.y] and curvebelts[pos.y][pos.x]=="left" then
+              line_caps={2,5}
+            else
+              line_caps={4,4}
+            end
+          elseif e.type=="transport-belt-to-ground" then
+            -- caps for lines 3/4 will get set iff 1/2 are full
+            line_caps={2,2,9999,9999}
+          elseif e.type=="splitter" then
+            line_caps={nil,nil,nil,nil,2,2,2,2}
+          end
           for _,line in pairs(belt.lines) do
             -- debug(pos2s(pos)..' line '..line..':')
-            local line_caps = {}
-            if e.type=="transport-belt" then
-              if curvebelts[pos.y] and curvebelts[pos.y][pos.x]=="right" then
-                line_caps={5,2}
-              elseif curvebelts[pos.y] and curvebelts[pos.y][pos.x]=="left" then
-                line_caps={2,5}
-              else
-                line_caps={4,4}
-              end
-            elseif e.type=="transport-belt-to-ground" then
-              line_caps={2,2,4,4}
-            elseif e.type=="splitter" then
-              line_caps={nil,nil,nil,nil,2,2,2,2}
-            end
             local tl = e.get_transport_line(line)
             local item_name = nil
             for name,count in pairs(tl.get_contents()) do
@@ -216,36 +204,48 @@ local function onTick(event)
               item_name = name
             end
             if tl.get_item_count()>=line_caps[line] then
-              debug("overflow "..e.type.." "..line.." "..tl.get_item_count())
-              -- overflow!
-              local x,y = pos.x,pos.y
-              local dir = e.direction
-              if     dir==defines.direction.north then
-                y = y-0.75
-                if e.type=="splitter" then
-                  if line==5 or line==6 then x = x-0.5 else x = x+0.5 end
-                end
-              elseif dir==defines.direction.south then
-                y = y+0.75
-                if e.type=="splitter" then
-                  if line==5 or line==6 then x = x+0.5 else x = x-0.5 end
-                end
-              elseif dir==defines.direction.east then
-                x = x+0.75
-                if e.type=="splitter" then
-                  if line==5 or line==6 then y = y-0.5 else y = y+0.5 end
-                end
-              elseif dir==defines.direction.west then
-                x = x-0.75
-                if e.type=="splitter" then
-                  if line==5 or line==6 then y = y+0.5 else y = y-0.5 end
-                end
-              end
-              e.surface.spill_item_stack({x,y}, {name=item_name, count=1})
-              if tl.remove_item({name=item_name, count=1})==0 then
-                debug("failed to remove "..item_name)
+              if e.type=="transport-belt-to-ground" and e.belt_to_ground_type=="input" and line<3 then
+                -- overflow lines 3/4 iff 1/2 are full, and don't overflor 1/2
+                line_caps[line+2] = 4
               else
-                debug("removed "..item_name.." at "..pos2s(pos))
+                debug("overflow "..e.type.." "..line.." "..tl.get_item_count())
+                -- overflow!
+                -- figure out where the overflow spot is
+                local x,y = pos.x,pos.y
+                local dir = e.direction
+                local dx,dy = 0,0
+                if e.type=="transport-belt-to-ground" and e.belt_to_ground_type=="input" then
+                  -- spill beside the underground input
+                  dy = dy + 0.25
+                  if (line%2)==0 then 
+                    dx = dx + 0.65
+                  else 
+                    dx = dx - 0.65
+                 end
+                else
+                  -- spill past the end of the belt
+                  dy = dy-0.85
+                  if e.type=="splitter" then
+                    if line==5 or line==6 then dx = dx-0.5 else dx = dx+0.5 end
+                  end
+                  if (line%2)==0 then dx = dx + 0.23 else dx = dx - 0.23 end
+                end
+                -- rotate the coordinate deltas
+                local rp = rotate_pos({dx,dy},dir)
+                x = x + rp.x
+                y = y + rp.y
+                if e.surface.find_entity("item-on-ground", {x,y}) then
+                  e.surface.spill_item_stack({x,y}, {name=item_name, count=1})
+                else -- spill always skips the target spot, fill it first
+                  e.surface.create_entity{name="item-on-ground", 
+                    position={x,y}, force=e.force, 
+                    stack={name=item_name, count=1}}
+                end
+                if tl.remove_item({name=item_name, count=1})==0 then
+                  debug("failed to remove "..item_name)
+                else
+                  debug("removed "..item_name.." at "..pos2s(pos))
+                end
               end
             end
           end
@@ -336,17 +336,42 @@ local function find_all_entities(args)
   return entities
 end
 
-local function onLoad()
-  if global.terminal_belts==nil then
-    global.terminal_belts={}
-    global.curve_belts={}
-    termbelts = global.terminal_belts
-    curvebelts = global.curve_belts
-    for _,type in pairs({"transport-belt","transport-belt-to-ground","splitter"}) do
-      for _,e in pairs(find_all_entities{type=type}) do
-        check_and_update(e,false,true)
-      end
+local function refreshGlobalData()
+  global.terminal_belts={}
+  global.curve_belts={}
+  for _,type in pairs({"transport-belt","transport-belt-to-ground","splitter"}) do
+    for _,e in pairs(find_all_entities{type=type}) do
+      check_and_update(e,false,true)
     end
+  end
+end
+
+local function checkForMigration(old_version, new_version)
+  -- TODO: when a migration is necessary, trigger it here or set a flag.
+end
+
+local function checkForDataMigration(old_data_version, new_data_version)
+  -- TODO: when a migration is necessary, trigger it here or set a flag.
+  if old_data_version ~= new_data_version then
+    refreshGlobalData()
+  end
+end
+
+local function onLoad()
+  -- The only reason to have version/data_version is to trigger migrations, so do that here.
+  if global.version then
+    checkForMigration(global.version, mod_version)
+  end
+  if global.data_version then
+    checkForDataMigration(global.data_version, mod_data_version)
+  end
+
+  -- After these lines, we can no longer check for migration.
+  global.version=mod_version
+  global.data_version=mod_data_version
+
+  if global.terminal_belts==nil then
+    refreshGlobalData()
   end
 
   curvebelts = global.curve_belts

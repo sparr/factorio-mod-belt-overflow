@@ -18,19 +18,16 @@ local function debug() end
 -- end
 
 local function pos2s(pos)
-  if pos then
+  if pos.x then
     return pos.x..','..pos.y
+  elseif pos[1] then
+    return pos[1]..','..pos[2]
   end
   return ''
 end
 
-local function rotate_pos(pos,dir)
-  local x,y=pos.x,pos.y
-  if not x then
-    x,y=pos[1],pos[2]
-  end
-  if     dir==defines.direction.north then
-  elseif dir==defines.direction.south then
+local function rotate_pos(x,y,dir)
+  if     dir==defines.direction.south then
     x = -x
     y = -y
   elseif dir==defines.direction.east then
@@ -42,7 +39,7 @@ local function rotate_pos(pos,dir)
     x = y
     y = -t
   end
-  return {x,y,x=x,y=y}
+  return x,y
 end
 
 local belt_speeds = {basic=1,fast=2,express=3,faster=4,purple=5}
@@ -61,11 +58,13 @@ local function terminal_belt_lines(entity,entity_to_ignore)
   end
   local dir = entity.direction
   local pos = entity.position
+  pos[1] = pos.x
+  pos[2] = pos.y
   local to_check = {}
   if entity.type=="splitter" then
     to_check = {
-      {pos=rotate_pos({x=pos.x-0.5,y=pos.y},dir),lines={5,6}},
-      {pos=rotate_pos({x=pos.x+0.5,y=pos.y},dir),lines={7,8}}}
+      {pos={rotate_pos(pos.x-0.5,pos.y,dir)},lines={5,6}},
+      {pos={rotate_pos(pos.x+0.5,pos.y,dir)},lines={7,8}}}
   elseif entity.type=="transport-belt-to-ground" and 
     entity.belt_to_ground_type=="input" then
     to_check = {{pos=pos,lines={3,4}}}
@@ -81,10 +80,10 @@ local function terminal_belt_lines(entity,entity_to_ignore)
     end
     -- following code originally copied from https://github.com/sparr/factorio-mod-belt-combinators
     for _,check in pairs(to_check) do
-      debug("checking "..pos2s(check.pos))
-      local delta = rotate_pos({0,-1},dir)
-      local tpos = {x=check.pos.x+delta.x,y=check.pos.y+delta.y}
-      debug("tpos "..pos2s(tpos))
+      -- debug("checking "..pos2s(check.pos))
+      local dx,dy = rotate_pos(0,-1,dir)
+      local tpos = {check.pos[1]+dx,check.pos[2]+dy}
+      -- debug("tpos "..pos2s(tpos))
       local entities = game.get_surface(entity.surface.index).find_entities({tpos,tpos})
       local target = nil
       for _,candidate in pairs(entities) do
@@ -98,7 +97,7 @@ local function terminal_belt_lines(entity,entity_to_ignore)
         end
       end
       if target then
-        debug("target found "..target.type)
+        -- debug("target found "..target.type)
         local function beltspeedword(name)
           local m = string.match("^(.*)-transport-belt",name)
           if not m then m = string.match("^(.*)-transport-belt-to-ground",name) end
@@ -133,8 +132,8 @@ local function terminal_belt_lines(entity,entity_to_ignore)
               local belt_behind_target = false
               -- find a belt-like entity behind the target or on the far side
               local bpd = {
-                {pos=rotate_pos({target.position.x,target.position.y+1},target.direction),dir=target.direction},
-                {pos=rotate_pos({pos.x,pos.y-2},dir),dir=defines.direction.south}
+                {pos={rotate_pos(target.position.x,target.position.y+1,target.direction)},dir=target.direction},
+                {pos={rotate_pos(pos.x,pos.y-2,dir)},dir=defines.direction.south}
               }
               for _,bpos in pairs(bpd) do
                 local entities = game.get_surface(entity.surface.index).find_entities({bpos.pos,bpos.pos})
@@ -170,45 +169,55 @@ local function terminal_belt_lines(entity,entity_to_ignore)
   return {}
 end
 
+local line_caps = {curve_right={5,2},curve_left={2,5},straight={4,4},ground={2,2,4,4},splitter={nil,nil,nil,nil,2,2,2,2}}
+
 local function onTick(event)
   if event.tick%polling_cycles == 0 then
     for y,row in pairs(termbelts) do
       for x,belt in pairs(row) do
-        debug(x..','..y)
+        -- debug(x..','..y)
         if not belt.entity or not belt.entity.valid then
           termbelts[y][x]=nil
         else
           local e = belt.entity
           local pos = e.position
-          local line_caps = {}
+          local caps
           if e.type=="transport-belt" then
             if curvebelts[pos.y] and curvebelts[pos.y][pos.x]=="right" then
-              line_caps={5,2}
+              caps=line_caps.curve_right
             elseif curvebelts[pos.y] and curvebelts[pos.y][pos.x]=="left" then
-              line_caps={2,5}
+              caps=line_caps.curve_left
             else
-              line_caps={4,4}
+              caps=line_caps.straight
             end
           elseif e.type=="transport-belt-to-ground" then
-            -- caps for lines 3/4 will get set iff 1/2 are full
-            line_caps={2,2,9999,9999}
+            caps=line_caps.ground
           elseif e.type=="splitter" then
-            line_caps={nil,nil,nil,nil,2,2,2,2}
+            caps=line_caps.splitter
           end
-          for _,line in pairs(belt.lines) do
+          local ground_prefill = {}
+          for i=1,#belt.lines do
+            line = belt.lines[i]
             -- debug(pos2s(pos)..' line '..line..':')
             local tl = e.get_transport_line(line)
             local item_name = nil
-            for name,count in pairs(tl.get_contents()) do
-              -- debug(line..' '..name..' '..count)
-              item_name = name
-            end
-            if tl.get_item_count()>=line_caps[line] then
-              if e.type=="transport-belt-to-ground" and e.belt_to_ground_type=="input" and line<3 then
-                -- overflow lines 3/4 iff 1/2 are full, and don't overflor 1/2
-                line_caps[line+2] = 4
+            if tl.get_item_count()>=caps[line] then
+              for name,count in pairs(tl.get_contents()) do
+                -- debug(line..' '..name..' '..count)
+                item_name = name
+                break
+              end
+              if e.type=="transport-belt-to-ground" and 
+                e.belt_to_ground_type=="input" and 
+                line<3 then
+                -- track this for future reference, but don't overflow here
+                ground_prefill[line]=true
+              elseif e.type=="transport-belt-to-ground" and 
+                e.belt_to_ground_type=="input" and 
+                line>2 and not ground_prefill[line-2] then
+                -- do nothing, this won't overflow until the prior line overflows
               else
-                debug("overflow "..e.type.." "..line.." "..tl.get_item_count())
+                -- debug("overflow "..e.type.." "..line.." "..tl.get_item_count())
                 -- overflow!
                 -- figure out where the overflow spot is
                 local x,y = pos.x,pos.y
@@ -231,20 +240,21 @@ local function onTick(event)
                   if (line%2)==0 then dx = dx + 0.23 else dx = dx - 0.23 end
                 end
                 -- rotate the coordinate deltas
-                local rp = rotate_pos({dx,dy},dir)
-                x = x + rp.x
-                y = y + rp.y
-                if e.surface.find_entity("item-on-ground", {x,y}) then
-                  e.surface.spill_item_stack({x,y}, {name=item_name, count=1})
-                else -- spill always skips the target spot, fill it first
-                  e.surface.create_entity{name="item-on-ground", 
-                    position={x,y}, force=e.force, 
-                    stack={name=item_name, count=1}}
-                end
-                if tl.remove_item({name=item_name, count=1})==0 then
-                  debug("failed to remove "..item_name)
+                local rpx,rpy = rotate_pos(dx,dy,dir)
+                local spill_pos = {x + rpx, y + rpy}
+                local itemstack = {name=item_name, count=1}
+                -- if e.surface.find_entity("item-on-ground", spill_pos) then
+                  e.surface.spill_item_stack(spill_pos, itemstack)
+                -- disabled this condition for performance reasons
+                -- else -- spill always skips the target spot, fill it first
+                --   e.surface.create_entity{name="item-on-ground", 
+                --     position=spill_pos, force=e.force, 
+                --     stack={name=item_name, count=1}}
+                -- end
+                if tl.remove_item(itemstack)==0 then
+                  debug("belt-overflow failed to remove "..item_name)
                 else
-                  debug("removed "..item_name.." at "..pos2s(pos))
+                  -- debug("removed "..item_name.." at "..pos2s(pos))
                 end
               end
             end
@@ -284,10 +294,10 @@ local function check_and_update(entity,ignore_entity,just_one)
           t = terminal_belt_lines(candidate,ignore_entity and entity or nil)
           if #t>0 then
             termbelts[pos.y][pos.x] = {entity=candidate,lines=t}
-            debug(pos2s(pos)..' terminal '..candidate.type..' '..lines2s(termbelts[pos.y][pos.x].lines))
+            -- debug(pos2s(pos)..' terminal '..candidate.type..' '..lines2s(termbelts[pos.y][pos.x].lines))
           else
             termbelts[pos.y][pos.x] = nil
-            debug(pos2s(pos)..' non-terminal '..candidate.type)
+            -- debug(pos2s(pos)..' non-terminal '..candidate.type)
           end
         end
       end
@@ -330,7 +340,7 @@ local function find_all_entities(args)
         for _, ent in pairs(surface.find_entities_filtered(args)) do
             entities[#entities+1] = ent
         end
-        debug("checked chunk during initialisation")
+        -- debug("checked chunk during initialisation")
     end
   end
   return entities
@@ -372,11 +382,11 @@ local function onLoad()
     refreshData()
   end
 
-  for y,row in pairs(termbelts) do
-    for x,belt in pairs(row) do
-      debug(x..','..y)
-    end
-  end
+  -- for y,row in pairs(termbelts) do
+  --   for x,belt in pairs(row) do
+  --     debug(x..','..y)
+  --   end
+  -- end
 
 end
 

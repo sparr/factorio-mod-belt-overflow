@@ -3,22 +3,19 @@ require "config"
 local mod_version="0.0.2"
 local mod_data_version="0.0.2"
 
-termbelts = {}
-curvebelts = {}
+local termbelts = {}
+local curvebelts = {}
 
-belt_polling_rate = math.max(math.min(belt_polling_rate,60),1)
+local belt_polling_rate = math.max(math.min(belt_polling_rate,60),1)
 
 local polling_cycles = math.floor(60/belt_polling_rate)
 
----[[
-local function print(...)
-  return game.player.print(...)
-end
---]]
-
---swap comment to toggle debug prints
 local function debug() end
--- local debug = print
+-- local function debug(...)
+--   if game.players[1] then
+--     game.players[1].print(...)
+--   end
+-- end
 
 local function pos2s(pos)
   if pos then
@@ -85,8 +82,10 @@ local function terminal_belt_lines(entity,entity_to_ignore)
     -- following code originally copied from https://github.com/sparr/factorio-mod-belt-combinators
     for _,check in pairs(to_check) do
       debug("checking "..pos2s(check.pos))
-      local tpos = rotate_pos({x=check.pos.x,y=check.pos.y-1},dir)
-      local entities = game.get_surface(entity.surface.index).find_entities({{0,0},{0,0}})
+      local delta = rotate_pos({0,-1},dir)
+      local tpos = {x=check.pos.x+delta.x,y=check.pos.y+delta.y}
+      debug("tpos "..pos2s(tpos))
+      local entities = game.get_surface(entity.surface.index).find_entities({tpos,tpos})
       local target = nil
       for _,candidate in pairs(entities) do
         if candidate ~= entity_to_ignore then
@@ -175,6 +174,7 @@ local function onTick(event)
   if event.tick%polling_cycles == 0 then
     for y,row in pairs(termbelts) do
       for x,belt in pairs(row) do
+        debug(x..','..y)
         if not belt.entity or not belt.entity.valid then
           termbelts[y][x]=nil
         else
@@ -336,9 +336,11 @@ local function find_all_entities(args)
   return entities
 end
 
-local function refreshGlobalData()
+local function refreshData()
   global.terminal_belts={}
   global.curve_belts={}
+  curvebelts = global.curve_belts
+  termbelts = global.terminal_belts
   for _,type in pairs({"transport-belt","transport-belt-to-ground","splitter"}) do
     for _,e in pairs(find_all_entities{type=type}) do
       check_and_update(e,false,true)
@@ -353,29 +355,29 @@ end
 local function checkForDataMigration(old_data_version, new_data_version)
   -- TODO: when a migration is necessary, trigger it here or set a flag.
   if old_data_version ~= new_data_version then
-    refreshGlobalData()
+    refreshData()
   end
 end
 
 local function onLoad()
   -- The only reason to have version/data_version is to trigger migrations, so do that here.
-  if global.version then
-    checkForMigration(global.version, mod_version)
-  end
-  if global.data_version then
-    checkForDataMigration(global.data_version, mod_data_version)
-  end
+  checkForMigration(global.version, mod_version)
+  checkForDataMigration(global.data_version, mod_data_version)
 
   -- After these lines, we can no longer check for migration.
   global.version=mod_version
   global.data_version=mod_data_version
 
   if global.terminal_belts==nil then
-    refreshGlobalData()
+    refreshData()
   end
 
-  curvebelts = global.curve_belts
-  termbelts = global.terminal_belts
+  for y,row in pairs(termbelts) do
+    for x,belt in pairs(row) do
+      debug(x..','..y)
+    end
+  end
+
 end
 
 script.on_init(onLoad)

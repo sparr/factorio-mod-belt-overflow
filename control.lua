@@ -1,7 +1,7 @@
 require "config"
 
-local mod_version="0.0.2"
-local mod_data_version="0.0.2"
+local mod_version="0.12.0"
+local mod_data_version="0.12.0"
 
 local termbelts = {}
 local curvebelts = {}
@@ -10,47 +10,72 @@ local belt_polling_rate = math.max(math.min(belt_polling_rate,60),1)
 
 local polling_cycles = math.floor(60/belt_polling_rate)
 
-local function debug() end
+local polling_remainder = math.random(polling_cycles)-1
+
 -- local function debug(...)
 --   if game.players[1] then
 --     game.players[1].print(...)
 --   end
 -- end
 
-local function pos2s(pos)
-  if pos.x then
-    return pos.x..','..pos.y
-  elseif pos[1] then
-    return pos[1]..','..pos[2]
-  end
-  return ''
-end
+-- local function pos2s(pos)
+--   if pos.x then
+--     return pos.x..','..pos.y
+--   elseif pos[1] then
+--     return pos[1]..','..pos[2]
+--   end
+--   return ''
+-- end
 
-local function rotate_pos(x,y,dir)
-  if     dir==defines.direction.south then
+-- local function lines2s(lines)
+--   out = '['
+--   for k,v in pairs(lines) do
+--     out = out .. v .. ','
+--   end
+--   out = out .. ']'
+--   return out
+-- end
+
+local function rotate_posd(posd,rotation)
+  local x,y,d = posd[1],posd[2],posd[3]
+  if     rotation==defines.direction.south then
+    d=(d+4)%8
     x = -x
     y = -y
-  elseif dir==defines.direction.east then
+  elseif rotation==defines.direction.east then
+    d=(d+2)%8
     t = x
     x = -y
     y = t
-  elseif dir==defines.direction.west then
+  elseif rotation==defines.direction.west then
+    d=(d+6)%8
     t = x
     x = y
     y = -t
   end
-  return x,y
+  return x,y,d
+end
+
+local function rotate_pos(x,y,rotation)
+  return rotate_posd({x,y,0},rotation)
 end
 
 local belt_speeds = {basic=1,fast=2,express=3,faster=4,purple=5}
 
--- starting_entity is a belt(-like) entity, or a belt combinator
--- lines are which side to follow, array of 2-8 booleans
-local function terminal_belt_lines(entity,entity_to_ignore)
+local function beltspeedword(name)
+  local m = string.match(name,"^(.*)%-transport%-belt")
+  if not m then m = string.match(name,"^(.*)%-transport%-belt%-to%-ground") end
+  if not m then m = string.match(name,"^(.*)%-splitter") end
+  return m
+end
+
+local function terminal_belt_lines(args)
+  local entity = args.entity
+  local entity_to_ignore = args.entity_to_ignore
   if entity==entity_to_ignore then return {} end
   if entity.type=="transport-belt-to-ground" and 
     entity.belt_to_ground_type=="input" then
-    if #entity.neighbours>0 then
+    if #entity.neighbours>0 and entity.neighbours[1] ~= entity_to_ignore then
       return {}
     else
       return {1,2,3,4}
@@ -62,9 +87,11 @@ local function terminal_belt_lines(entity,entity_to_ignore)
   pos[2] = pos.y
   local to_check = {}
   if entity.type=="splitter" then
+    local dx,dy = rotate_pos(-0.5,0,dir)
     to_check = {
-      {pos={rotate_pos(pos.x-0.5,pos.y,dir)},lines={5,6}},
-      {pos={rotate_pos(pos.x+0.5,pos.y,dir)},lines={7,8}}}
+      {pos={pos.x+dx,pos.y+dy},lines={5,6}},
+      {pos={pos.x-dx,pos.y-dy},lines={7,8}}
+    }
   elseif entity.type=="transport-belt-to-ground" and 
     entity.belt_to_ground_type=="input" then
     to_check = {{pos=pos,lines={3,4}}}
@@ -98,12 +125,6 @@ local function terminal_belt_lines(entity,entity_to_ignore)
       end
       if target then
         -- debug("target found "..target.type)
-        local function beltspeedword(name)
-          local m = string.match("^(.*)-transport-belt",name)
-          if not m then m = string.match("^(.*)-transport-belt-to-ground",name) end
-          if not m then m = string.match("^(.*)-splitter",name) end
-          return m
-        end
         -- any feed into a slower belt can be terminal
         local bsw1 = beltspeedword(entity.name)
         local bsw2 = beltspeedword(target.name)
@@ -131,20 +152,26 @@ local function terminal_belt_lines(entity,entity_to_ignore)
             if target.type=='transport-belt' then
               local belt_behind_target = false
               -- find a belt-like entity behind the target or on the far side
+              local tpxd,tpyd=rotate_pos(0,1,target.direction)
+              local pxd, pyd =rotate_pos(0,-2,dir)
               local bpd = {
-                {pos={rotate_pos(target.position.x,target.position.y+1,target.direction)},dir=target.direction},
-                {pos={rotate_pos(pos.x,pos.y-2,dir)},dir=defines.direction.south}
+                {pos={target.position.x+tpxd,target.position.y+tpyd},dir=target.direction},
+                {pos={pos.x+pxd,pos.y+pyd},dir=(dir+4)%8}
               }
               for _,bpos in pairs(bpd) do
+                -- debug("checking for belt-behind at "..pos2s(bpos.pos).." dir="..bpos.dir)
                 local entities = game.get_surface(entity.surface.index).find_entities({bpos.pos,bpos.pos})
                 for _,candidate in pairs(entities) do
-                  if candidate.type == "transport-belt" or
-                    candidate.type == "transport-belt-to-ground" or
-                    candidate.type == "splitter" then
-                    if candidate.direction == bpos.dir then
-                      belt_behind_target = true
+                  if candidate ~= entity_to_ignore then
+                    -- debug("candidate "..candidate.type.." ".."dir="..candidate.direction)
+                    if candidate.type == "transport-belt" or
+                      candidate.type == "transport-belt-to-ground" or
+                      candidate.type == "splitter" then
+                      if candidate.direction == bpos.dir then
+                        belt_behind_target = true
+                      end
+                      break
                     end
-                    break
                   end
                 end
                 if belt_behind_target then break end
@@ -164,20 +191,31 @@ local function terminal_belt_lines(entity,entity_to_ignore)
         result(check.lines)
       end
     end
+    -- splitters can't be half-terminal
+    if entity.type=="splitter" and #result_lines<4 then return {} end
     return result_lines
   end
   return {}
 end
 
+local function cleartermbelt(x,y)
+  if termbelts[y] and termbelts[y][x] then
+    if termbelts[y][x].indicator then
+      termbelts[y][x].indicator.destroy()
+    end
+    termbelts[y][x] = nil
+  end
+end
+
 local line_caps = {curve_right={5,2},curve_left={2,5},straight={4,4},ground={2,2,4,4},splitter={nil,nil,nil,nil,2,2,2,2}}
 
 local function onTick(event)
-  if event.tick%polling_cycles == 0 then
+  if event.tick%polling_cycles == polling_remainder then
     for y,row in pairs(termbelts) do
       for x,belt in pairs(row) do
         -- debug(x..','..y)
         if not belt.entity or not belt.entity.valid then
-          termbelts[y][x]=nil
+          cleartermbelt(x,y)
         else
           local e = belt.entity
           local pos = e.position
@@ -197,10 +235,10 @@ local function onTick(event)
           end
           local ground_prefill = {}
           for i=1,#belt.lines do
-            line = belt.lines[i]
+            local line = belt.lines[i]
             -- debug(pos2s(pos)..' line '..line..':')
             local tl = e.get_transport_line(line)
-            local item_name = nil
+            local item_name
             if tl.get_item_count()>=caps[line] then
               for name,count in pairs(tl.get_contents()) do
                 -- debug(line..' '..name..' '..count)
@@ -252,7 +290,7 @@ local function onTick(event)
                 --     stack={name=item_name, count=1}}
                 -- end
                 if tl.remove_item(itemstack)==0 then
-                  debug("belt-overflow failed to remove "..item_name)
+                  -- debug("belt-overflow failed to remove "..item_name)
                 else
                   -- debug("removed "..item_name.." at "..pos2s(pos))
                 end
@@ -265,68 +303,125 @@ local function onTick(event)
   end
 end
 
-local function lines2s(lines)
-  out = '['
-  for k,v in pairs(lines) do
-    out = out .. v .. ','
+local function create_indicator(entity)
+  local indicator_variant = ""
+  if entity.type == "splitter" then
+    if (entity.direction%4)==0 then
+      indicator_variant = "-wide"
+    else
+      indicator_variant = "-tall"
+    end
   end
-  out = out .. ']'
-  return out
+  return entity.surface.create_entity{
+            name = "belt-overflow-indicator" .. indicator_variant,
+            position = entity.position
+          }
 end
 
-local function check_and_update(entity,ignore_entity,just_one)
+local function check_and_update_entity(args)
+  local entity = args.entity
+  local entity_to_ignore = args.entity_to_ignore
   if entity then
-    local box = {}
-    if just_one then
-      box = {entity.position,entity.position}
+    local pos = entity.position
+    t = terminal_belt_lines{entity=entity,entity_to_ignore=entity_to_ignore}
+    if #t>0 then
+      if not termbelts[pos.y] then termbelts[pos.y] = {} end
+      if not termbelts[pos.y][pos.x] then
+        termbelts[pos.y][pos.x] = {
+          entity = entity,
+          lines = t,
+          indicator = create_indicator(entity)
+        }
+      else
+        termbelts[pos.y][pos.x].entity = entity
+        termbelts[pos.y][pos.x].lines = t
+        if not termbelts[pos.y][pos.x].indicator then 
+          termbelts[pos.y][pos.x].indicator = create_indicator(entity)
+        end
+      end
+      -- debug(pos2s(pos)..' terminal '..entity.type..' '..lines2s(termbelts[pos.y][pos.x].lines))
     else
-      box = {{entity.position.x-1.5,entity.position.y-1.5},{entity.position.x+1.5,entity.position.y+1.5}}
+      cleartermbelt(pos.x,pos.y)
+      -- debug(pos2s(pos)..' non-terminal '..entity.type)
     end
-    local entities = game.get_surface(entity.surface.index).find_entities(box)
-    for _,candidate in pairs(entities) do
-      if candidate.type == "transport-belt" or
-        candidate.type == "transport-belt-to-ground" or
-        candidate.type == "splitter" then
-        if ignore_entity and candidate==entity then
-        else
-          local pos = candidate.position
-          if not termbelts[pos.y] then termbelts[pos.y] = {} end
-          t = terminal_belt_lines(candidate,ignore_entity and entity or nil)
-          if #t>0 then
-            termbelts[pos.y][pos.x] = {entity=candidate,lines=t}
-            -- debug(pos2s(pos)..' terminal '..candidate.type..' '..lines2s(termbelts[pos.y][pos.x].lines))
-          else
-            termbelts[pos.y][pos.x] = nil
-            -- debug(pos2s(pos)..' non-terminal '..candidate.type)
-          end
+  end
+end
+
+local function check_and_update_posd(posd,surface,entity_to_ignore)
+  local box = {{posd[1]-0.5,posd[2]-0.5},{posd[1]+0.5,posd[2]+0.5}}
+  local entities = surface.find_entities(box)
+  for _,candidate in pairs(entities) do
+    if candidate.type == "transport-belt" or
+      candidate.type == "transport-belt-to-ground" or
+      candidate.type == "splitter" then
+      if candidate.direction == posd[3] then
+        if candidate ~= entity_to_ignore then
+          check_and_update_entity{entity=candidate,entity_to_ignore=entity_to_ignore}
         end
       end
     end
   end
 end
 
-local function onPlaceEntity(event)
-  local e = event.created_entity and event.created_entity or event.entity
-  if e.type=="transport-belt" or
-    e.type=="transport-belt-to-ground" or
-    e.type=="splitter" then
-    check_and_update(e,false,false)
-    if e.type=="transport-belt-to-ground" and #e.neighbours>0 then
-      check_and_update(e.neighbours[1],false,true)
+local function check_and_update_neighborhood(args)
+  local entity = args.entity
+  local removal = args.removal
+  local hood -- list of {dx,dy,dir} for a north-facing entity
+  if entity.type == "transport-belt" then
+    hood = {
+      {0,0,0}, -- check this entity itself
+      {-1,0,2},{1,0,6}, -- left and right sides can change if they point at this belt
+      {0,1,0}, -- ditto behind
+      {-1,-1,2},{1,-1,6}, -- ahead and left/right can change if they point at the same belt as this does
+      {0,-2,4} -- and so can two-ahead
+    }
+  elseif entity.type == "transport-belt-to-ground" then
+    if entity.belt_to_ground_type == "input" then
+      hood = {{0,0,0}} -- no neighbors can change for an underground input
+    else
+      hood = {
+        {0,0,0}, -- check this entity itself
+        {-1,-1,2},{1,-1,6}, -- ahead and left/right can change if they point at the same belt as this does
+        {0,-2,4} -- and so can two-ahead
+      }
+    end
+    if #entity.neighbours>0 then
+      check_and_update_entity{entity=entity.neighbours[1],entity_to_ignore=removal and entity or nil}
+    end
+  elseif entity.type == "splitter" then
+    hood = {
+      {0,0,0}, -- check this entity itself
+      {-0.5,1,0},{0.5,1,0}, -- behinds can change if they point at this splitter
+      {-1.5,-1,2},{1.5,-1,6}, -- aheads and left/right can change if they point at the same belt as this does
+      {-0.5,-2,4},{0.5,-2,4} -- and so can two-aheads
+    }
+  end
+  for _,posd in pairs(hood) do
+    posd = {rotate_posd(posd,entity.direction)}
+    if removal and posd[1]==0 and posd[2]==0 then
+      -- skip checking the to-be-removed element itself
+    else
+      check_and_update_posd({entity.position.x+posd[1],entity.position.y+posd[2],posd[3]},entity.surface,removal and entity or nil)
     end
   end
 end
 
-local function onRemoveEntity(event)
-  local e = event.entity
-  if e.type=="transport-belt" or
-    e.type=="transport-belt-to-ground" or
-    e.type=="splitter" then
-    check_and_update(e,true,false)
-    if e.type=="transport-belt-to-ground" and #e.neighbours>0 then
-      check_and_update(e.neighbours[1],false,true)
-    end
+local function onModifyEntity(args)
+  local entity=args.entity
+  local removal=args.removal
+  if entity.type=="transport-belt" or
+    entity.type=="transport-belt-to-ground" or
+    entity.type=="splitter" then
+    check_and_update_neighborhood{entity=entity,removal=removal}
   end
+end
+
+local function onPlaceEntity(event)
+  onModifyEntity{entity=event.created_entity and event.created_entity or event.entity, removal=false}
+end
+
+local function onRemoveEntity(event)
+  onModifyEntity{entity=event.entity, removal=true}
 end
 
 -- thanks to KeyboardHack on irc.freenode.net #factorio for this function
@@ -347,13 +442,21 @@ local function find_all_entities(args)
 end
 
 local function refreshData()
+  if global.terminal_belts then
+    for y,row in pairs(global.terminal_belts) do
+      for x,belt in pairs(row) do
+        -- debug('refreshData clear '..x..','..y)
+        cleartermbelt(x,y)
+      end
+    end
+  end
   global.terminal_belts={}
   global.curve_belts={}
   curvebelts = global.curve_belts
   termbelts = global.terminal_belts
   for _,type in pairs({"transport-belt","transport-belt-to-ground","splitter"}) do
     for _,e in pairs(find_all_entities{type=type}) do
-      check_and_update(e,false,true)
+      check_and_update_entity{entity=e}
     end
   end
 end
@@ -384,7 +487,7 @@ local function onLoad()
 
   -- for y,row in pairs(termbelts) do
   --   for x,belt in pairs(row) do
-  --     debug(x..','..y)
+  --     -- debug(x..','..y)
   --   end
   -- end
 
@@ -392,7 +495,7 @@ end
 
 script.on_init(onLoad)
 script.on_configuration_changed(onLoad)
-script.on_load(onLoad)
+-- script.on_load(onLoad)
 
 script.on_event(defines.events.on_built_entity, onPlaceEntity)
 script.on_event(defines.events.on_robot_built_entity, onPlaceEntity)

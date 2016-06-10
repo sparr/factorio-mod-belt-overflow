@@ -304,18 +304,21 @@ local function onTick(event)
 end
 
 local function create_indicator(entity)
-  local indicator_variant = ""
-  if entity.type == "splitter" then
-    if (entity.direction%4)==0 then
-      indicator_variant = "-wide"
-    else
-      indicator_variant = "-tall"
+  if draw_terminal_indicator then
+    local indicator_variant = ""
+    if entity.type == "splitter" then
+      if (entity.direction%4)==0 then
+        indicator_variant = "-wide"
+      else
+        indicator_variant = "-tall"
+      end
     end
+    return entity.surface.create_entity{
+              name = "belt-overflow-indicator" .. indicator_variant,
+              position = entity.position
+            }
   end
-  return entity.surface.create_entity{
-            name = "belt-overflow-indicator" .. indicator_variant,
-            position = entity.position
-          }
+  return nil
 end
 
 local function check_and_update_entity(args)

@@ -475,14 +475,38 @@ local function checkForDataMigration(old_data_version, new_data_version)
   end
 end
 
+local function updateIndicators(old_draw_terminal_indicator, new_draw_terminal_indicator)
+  if global.terminal_belts then
+    if old_draw_terminal_indicator ~= new_draw_terminal_indicator then
+      if new_draw_terminal_indicator then
+        -- add indicators to existing termbelts
+        for y,row in pairs(global.terminal_belts) do
+          for x,belt in pairs(row) do
+            belt.indicator = create_indicator(belt.entity)
+          end
+        end        
+      else
+        -- remove existing indicators
+        for y,row in pairs(global.terminal_belts) do
+          for x,belt in pairs(row) do
+            belt.indicator = nil
+          end
+        end        
+      end
+    end
+  end
+end
+
 local function onLoad()
   -- The only reason to have version/data_version is to trigger migrations, so do that here.
   checkForMigration(global.version, mod_version)
   checkForDataMigration(global.data_version, mod_data_version)
+  updateIndicators(global.draw_terminal_indicator, draw_terminal_indicator)
 
   -- After these lines, we can no longer check for migration.
   global.version=mod_version
   global.data_version=mod_data_version
+  global.draw_terminal_indicator=draw_terminal_indicator
 
   if global.terminal_belts==nil then
     refreshData()

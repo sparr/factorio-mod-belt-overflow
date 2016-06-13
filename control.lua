@@ -243,7 +243,6 @@ local function onTick(event)
               for name,count in pairs(tl.get_contents()) do
                 -- debug(line..' '..name..' '..count)
                 item_name = name
-                break
               end
               if e.type=="transport-belt-to-ground" and 
                 e.belt_to_ground_type=="input" and 

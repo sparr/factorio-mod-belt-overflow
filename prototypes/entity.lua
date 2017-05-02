@@ -1,6 +1,6 @@
 data:extend({
     {
-        type = "decorative",
+        type = "simple-entity",
         name = "belt-overflow-indicator",
         flags = {"placeable-neutral", "not-on-map"},
         icon = "__belt-overflow__/graphics/indicator.png",
@@ -21,7 +21,7 @@ data:extend({
     },
 
     {
-        type = "decorative",
+        type = "simple-entity",
         name = "belt-overflow-indicator-wide",
         flags = {"placeable-neutral", "not-on-map"},
         icon = "__belt-overflow__/graphics/indicator-wide.png",
@@ -42,7 +42,7 @@ data:extend({
     },
 -- "Entity direction can not be set on entity type: decorative" :(
     {
-        type = "decorative",
+        type = "simple-entity",
         name = "belt-overflow-indicator-tall",
         flags = {"placeable-neutral", "not-on-map"},
         icon = "__belt-overflow__/graphics/indicator-tall.png",

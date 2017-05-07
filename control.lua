@@ -488,7 +488,7 @@ local function updateIndicators()
       -- remove existing indicators
       for y,row in pairs(global.terminal_belts) do
         for x,belt in pairs(row) do
-          if belt.indicator.valid then belt.indicator.destroy() end
+          if belt.indicator and belt.indicator.valid then belt.indicator.destroy() end
           belt.indicator = nil
         end
       end

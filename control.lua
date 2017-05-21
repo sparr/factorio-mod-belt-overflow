@@ -226,17 +226,16 @@ local function onTick(event)
             local tl = e.get_transport_line(line)
             local item_name
             if tl.get_item_count()>=caps[line] then
-              for name,count in pairs(tl.get_contents()) do
-                -- debug(line..' '..name..' '..count)
-                item_name = name
-              end
+              item_name = tl[1].name
               if e.type=="underground-belt" and
                 e.belt_to_ground_type=="input" and
+                (not (e.neighbours == nil or #e.neighbours == 0)) and
                 line<3 then
                 -- track this for future reference, but don't overflow here
                 ground_prefill[line]=true
               elseif e.type=="underground-belt" and
                 e.belt_to_ground_type=="input" and
+                (not (e.neighbours == nil or #e.neighbours == 0)) and
                 line>2 and not ground_prefill[line-2] then
                 -- do nothing, this won't overflow until the prior line overflows
               else
@@ -256,7 +255,7 @@ local function onTick(event)
                  end
                 else
                   -- spill past the end of the belt
-                  dy = dy-0.85
+                  dy = dy - 1.05
                   if e.type=="splitter" then
                     if line==5 or line==6 then dx = dx-0.5 else dx = dx+0.5 end
                   end

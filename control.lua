@@ -35,7 +35,7 @@ local polling_remainder = math.random(polling_cycles)-1
 -- end
 
 local function has_neighbours(entity)
-  return not (entity == nil or entity.neighbours == nil or #entity.neighbours == 0)
+  return not (entity == nil or entity.neighbours == nil or (#entity.neighbours == 0 and not entity.valid))
 end
 
 -- takes in an [x,y,direction] and rotates it
@@ -80,7 +80,7 @@ local function terminal_belt_lines(args)
   if entity == entity_to_ignore then return {} end
   if entity.type == "underground-belt" and
     entity.belt_to_ground_type == "input" then
-    if has_neighbours(entity) and entity.neighbours[1] ~= entity_to_ignore then
+    if has_neighbours(entity) and entity.neighbours ~= entity_to_ignore then
       return {}
     else
       return {1, 2, 3, 4}
@@ -384,7 +384,7 @@ local function check_and_update_neighborhood(args)
       }
     end
     if has_neighbours(entity) then
-      check_and_update_entity{entity=entity.neighbours[1],entity_to_ignore=removal and entity or nil}
+      check_and_update_entity{entity=entity.neighbours,entity_to_ignore=removal and entity or nil}
     end
   elseif entity.type == "splitter" then
     hood = {

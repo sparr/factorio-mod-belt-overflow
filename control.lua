@@ -8,9 +8,11 @@ global.curve_belts = global.curve_belts
 local polling_cycles = math.floor(60 / settings.global['belt_overflow_poll_frequency'].value)
 local polling_remainder = math.random(polling_cycles)-1
 
+-- local debugnum = 0
 -- local function debug(...)
 --   if game and game.players[1] then
---     game.players[1].print("DEBUG: " .. serpent.line(...,{comment=false}))
+--     game.players[1].print("DEBUG " .. debugnum .. " " .. game.tick .. ": " .. serpent.line(...,{comment=false}))
+--     debugnum = debugnum + 1
 --   end
 -- end
 

@@ -32,6 +32,10 @@ local polling_remainder = math.random(polling_cycles)-1
 --   return out
 -- end
 
+local function has_neighbours(entity)
+  return not (entity == nil or entity.neighbours == nil or #entity.neighbours == 0)
+end
+
 -- takes in an [x,y,direction] and rotates it
 local function rotate_posd(posd,rotation)
   local x,y,d = posd[1],posd[2],posd[3]
@@ -74,7 +78,7 @@ local function terminal_belt_lines(args)
   if entity == entity_to_ignore then return {} end
   if entity.type == "underground-belt" and
     entity.belt_to_ground_type == "input" then
-    if #entity.neighbours > 0 and entity.neighbours[1] ~= entity_to_ignore then
+    if has_neighbours(entity) and entity.neighbours[1] ~= entity_to_ignore then
       return {}
     else
       return {1, 2, 3, 4}
@@ -229,13 +233,13 @@ local function onTick(event)
               item_name = tl[1].name
               if e.type=="underground-belt" and
                 e.belt_to_ground_type=="input" and
-                (not (e.neighbours == nil or #e.neighbours == 0)) and
+                has_neighbours(e) and
                 line<3 then
                 -- track this for future reference, but don't overflow here
                 ground_prefill[line]=true
               elseif e.type=="underground-belt" and
                 e.belt_to_ground_type=="input" and
-                (not (e.neighbours == nil or #e.neighbours == 0)) and
+                has_neighbours(e) and
                 line>2 and not ground_prefill[line-2] then
                 -- do nothing, this won't overflow until the prior line overflows
               else
@@ -377,7 +381,7 @@ local function check_and_update_neighborhood(args)
         {0,-2,4} -- and so can two-ahead
       }
     end
-    if #entity.neighbours>0 then
+    if has_neighbours(entity) then
       check_and_update_entity{entity=entity.neighbours[1],entity_to_ignore=removal and entity or nil}
     end
   elseif entity.type == "splitter" then

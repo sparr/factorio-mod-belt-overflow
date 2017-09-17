@@ -6,7 +6,10 @@ global.curve_belts = global.curve_belts
 
 -- poll_frequency is checks per second, polling_cycles is ticks per check
 local polling_cycles = math.floor(60 / settings.global['belt_overflow_poll_frequency'].value)
-local polling_remainder = math.random(polling_cycles)-1
+
+-- use of math.random() during game loading was broken due to desyncs somewhere around 0.15.25
+-- local polling_remainder = math.random(polling_cycles)-1
+local polling_remainder = 23 % polling_cycles
 
 -- local debugnum = 0
 -- local function debug(...)

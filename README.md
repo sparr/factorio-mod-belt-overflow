@@ -17,4 +17,7 @@ Suggested approaches for avoiding overflowing belts:
 
 Suggested approaches for minimizing damage from overflow:
 * Ensure no belt terminates near another belt
-* Use smart inserters to filter trash from belts before they reach your assemblers
+* Use splitter filters or smart inserters to filter trash from belts before they reach your assemblers
+
+Known bugs:
+* Some side loading configurations overflow incorrectly

@@ -1,4 +1,4 @@
-local mod_version="0.15.0"
+local mod_version="0.16.0"
 local mod_data_version="0.13.0"
 
 global.terminal_belts = global.terminal_belts
@@ -538,7 +538,7 @@ script.on_event(defines.events.on_robot_built_entity, onPlaceEntity)
 
 script.on_event(defines.events.on_player_rotated_entity, onPlaceEntity)
 
-script.on_event(defines.events.on_preplayer_mined_item, onRemoveEntity)
+script.on_event(defines.events.on_pre_player_mined_item, onRemoveEntity)
 script.on_event(defines.events.on_robot_pre_mined, onRemoveEntity)
 script.on_event(defines.events.on_entity_died, onRemoveEntity)
 

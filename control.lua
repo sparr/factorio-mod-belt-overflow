@@ -1,4 +1,4 @@
-local mod_version="0.16.0"
+local mod_version="0.17.0"
 local mod_data_version="0.13.0"
 
 global.terminal_belts = global.terminal_belts

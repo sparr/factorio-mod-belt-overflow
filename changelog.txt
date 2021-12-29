@@ -1,6 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 1.1.0
-Date: ????
+Date: 2021-12-29
   Changes:
     - Version bump for Factorio 1.1
     - Remove unnecessary mod settings definition properties

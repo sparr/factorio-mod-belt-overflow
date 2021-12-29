@@ -1,0 +1,73 @@
+---------------------------------------------------------------------------------------------------
+Version: 1.1.0
+Date: ????
+  Changes:
+    - Version bump for Factorio 1.1
+    - Remove unnecessary mod settings definition properties
+  Other:
+    - Retroactive changelog entries based on Github releases
+---------------------------------------------------------------------------------------------------
+Version: 0.17.0
+Date: 2019-??-??
+  Changes:
+    - Version bump for Factorio 0.17
+---------------------------------------------------------------------------------------------------
+Version: 0.16.0
+Date: 2018-05-28
+  Changes:
+    - Version bump for Factorio 0.16
+---------------------------------------------------------------------------------------------------
+Version: 0.15.4
+Date: 2017-09-17
+  Bugfixes:
+    - Fix crash related to math.random
+---------------------------------------------------------------------------------------------------
+Version: 0.15.1
+Date: 2017-05-06
+  Bugfixes:
+    - Fix validity check bug in the configuration change code
+---------------------------------------------------------------------------------------------------
+Version: 0.15.0
+Date: 2017-05-02
+  Changes:
+    - Version bump for Factorio 0.15 (experimental)
+  Bugfixes:
+    - Many, especially for underground belts
+---------------------------------------------------------------------------------------------------
+Version: 0.13.0
+Date: 2016-06-28
+  Changes:
+    - Version bump for Factorio 0.13
+  Bugfixes:
+    - Some
+---------------------------------------------------------------------------------------------------
+Version: 0.12.1
+Date: 2016-06-09
+  Bugfixes:
+    - Fixed problem with application of terminal belt highlight option
+---------------------------------------------------------------------------------------------------
+Version: 0.12.0
+Date: 2016-06-09
+  Features:
+    - Optional highlight of terminal belt locations
+  Optimizations:
+    - Major rewrite and refactor
+  Bugfixes:
+    - Some
+  Other:
+    - Mod versioning aligned with Factorio version
+---------------------------------------------------------------------------------------------------
+Version: 0.0.2
+Date: 2016-06-03
+  Changes:
+    - Items spill in a slightly better location
+  Optimizations:
+    - Some
+  Bugfixes:
+    - Some
+---------------------------------------------------------------------------------------------------
+Version: 0.0.1
+Date: 2016-06-01
+  Other:
+    - First version!
+

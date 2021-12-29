@@ -20,4 +20,4 @@ Suggested approaches for minimizing damage from overflow:
 * Use splitter filters or smart inserters to filter trash from belts before they reach your assemblers
 
 Known bugs:
-* Some side loading configurations overflow incorrectly
+https://github.com/sparr/factorio-mod-belt-overflow/issues

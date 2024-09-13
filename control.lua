@@ -1,7 +1,27 @@
 local mod_version="0.17.0"
 local mod_data_version="0.13.0"
 
+---@alias BeltLikeEntity LuaEntity.TransportBelt|LuaEntity.UndergroundBelt|LuaEntity.Splitter|LuaEntity.base
+
+---@class TerminalBelt
+---@field indicator? LuaEntity UI indicator rendered on top of a belt
+---@field entity BeltLikeEntity The belt, underground, or splitter that might be terminal
+---@field lines integer[] The indices of the transport lines of this belt that might be terminal
+
+---@generic T
+---@alias Array2D table<number, table<number, T>>
+
+---@alias Direction defines.direction|integer
+
+---@type {}
+global=global
+
+---Cache of all belts that are "terminal", i.e. might be the start of an overflow
+---@type Array2D<TerminalBelt>
 global.terminal_belts = global.terminal_belts
+---@alias CurveBelts Array2D<"right"|"left">
+---Cache of all belts that are corners
+---@type CurveBelts
 global.curve_belts = global.curve_belts
 
 -- poll_frequency is checks per second, polling_cycles is ticks per check
@@ -37,30 +57,49 @@ local polling_remainder = 23 % polling_cycles
 --   return out
 -- end
 
+---@param entity BeltLikeEntity
+---@return boolean
 local function has_neighbours(entity)
   return not (entity == nil or entity.neighbours == nil or (#entity.neighbours == 0 and not entity.valid))
 end
 
--- takes in an [x,y,direction] and rotates it
+---@class POSD
+---@field pos Vector
+---@field d Direction
+
+---North=0, East=90 degrees clockwise, South=180, West=270
+---@alias Rotation Direction
+
+---Rotates a POSD around the origin by the given amount
+---@param posd POSD
+---@param rotation Rotation
+---@return POSD
 local function rotate_posd(posd,rotation)
-  local x,y,d = posd[1],posd[2],posd[3]
-  if     rotation==defines.direction.south then
+  local x,y,d = posd.pos[1],posd.pos[2],posd.d
+  if     rotation == defines.direction.south then
     d = (d + 4) % 8
     x, y = -x, -y
-  elseif rotation==defines.direction.east then
+  elseif rotation == defines.direction.east then
     d = (d + 2) % 8
-    x, y = -y, x
-  elseif rotation==defines.direction.west then
+    x, y = -y, x -- not sure why luals is complaining about y on the left side being of unknown type
+  elseif rotation == defines.direction.west then
     d = (d + 6) % 8
     x, y = y, -x
   end
-  return x, y, d
+  return {pos={x, y}, d=d}
 end
 
-local function rotate_pos(x, y, rotation)
-  return rotate_posd( {x, y, 0}, rotation)
+---Rotates a position around the origin by the given amount
+---@param pos Vector
+---@param rotation Rotation
+---@return POSD
+local function rotate_pos(pos, rotation)
+  return rotate_posd( {pos=pos, d=defines.direction.north}, rotation)
 end
 
+---@param surface LuaSurface
+---@param pos Vector
+---@return BeltLikeEntity|nil
 local function find_belt_at(surface,pos)
   local targets = surface.find_entities_filtered{position=pos, type="transport-belt"}
   if targets[1] == nil then
@@ -77,6 +116,9 @@ local function find_belt_at(surface,pos)
 end
 
 
+---Identify which transport lines on a BeltLikeEntity are(?) terminal
+---@param args check_and_update_entity_param
+---@return integer[] lines Indices of the terminal belt lines
 local function terminal_belt_lines(args)
   local entity = args.entity
   local entity_to_ignore = args.entity_to_ignore
@@ -84,32 +126,44 @@ local function terminal_belt_lines(args)
   if entity.type == "underground-belt" and
     entity.belt_to_ground_type == "input" then
     if has_neighbours(entity) and entity.neighbours ~= entity_to_ignore then
+      -- underground input can't be terminal if the output exists and isn't being removed
       return {}
     else
       return {1, 2, 3, 4}
     end
   end
+  ---@type Direction
   local dir = entity.direction
+  ---@type Vector
   local pos = entity.position
   -- debug(dir)
   -- debug(pos)
   pos[1] = pos.x
   pos[2] = pos.y
+  ---The position(s) and line indices to check for terminal-ness on this entity
+  ---@type { pos: Vector, lines: integer[] }[]
   local to_check = {}
   if entity.type=="splitter" then
-    local dx,dy = rotate_pos(-0.5,0,dir)
+    -- the center of a splitter is half a tile off from the center of either of its two tiles we might be checking
+    local rotated = rotate_pos({-0.5,0},dir)
+    local dx,dy = rotated.pos[1], rotated.pos[2]
     to_check = {
       {pos={pos.x+dx,pos.y+dy},lines={5,6}},
       {pos={pos.x-dx,pos.y-dy},lines={7,8}}
     }
   elseif entity.type=="underground-belt" and
     entity.belt_to_ground_type=="input" then
+    -- TODO this might be redundant with early returns above, and might be wrong. investigate.
     to_check = {{pos=pos,lines={3,4}}}
   else
     to_check = {{pos=pos,lines={1,2}}}
   end
   if #to_check>0 then
+    ---The line indices identified as terminal
+    ---@type integer[]
     local result_lines = {}
+    ---Add line indices to `result_lines`
+    ---@param lines integer[]
     local function result(lines)
       for _,line in pairs(lines) do
         result_lines[#result_lines+1] = line
@@ -118,10 +172,12 @@ local function terminal_belt_lines(args)
     -- following code originally copied from https://github.com/sparr/factorio-mod-belt-combinators
     for _,check in pairs(to_check) do
       -- debug("checking "..pos2s(check.pos))
-      local dx,dy = rotate_pos(0,-1,dir)
-      local tpos = {check.pos[1]+dx,check.pos[2]+dy}
+      local rotated = rotate_pos({0,-1},dir)
+      local dx,dy = rotated.pos[1], rotated.pos[2]
+      ---@type Vector
+      local targetpos = {check.pos[1]+dx,check.pos[2]+dy}
       -- debug("tpos "..pos2s(tpos))
-      local target = find_belt_at(entity.surface, tpos)
+      local target = find_belt_at(entity.surface, targetpos)
       -- debug("target "..serpent.line(target))
       if target ~= nil and target ~= entity_to_ignore then
         -- debug("target found " .. target.type)
@@ -129,26 +185,26 @@ local function terminal_belt_lines(args)
         if entity.prototype.belt_speed > target.prototype.belt_speed then
           result(check.lines)
         -- nothing accepts connections from the front
-        elseif math.abs(target.direction-dir)==4 then
+        elseif math.abs(target.direction - dir)==4 then
           result(check.lines)
         -- underground belt outputs don't accept connections from behind
         elseif target.type=="underground-belt" and
           target.belt_to_ground_type=="output" and
           target.direction==dir then
           result(check.lines)
-        -- splitters don't accept connections from the side
+        -- splitters don't accept connections from the side or front
         elseif target.type=="splitter" and target.direction~=dir then
           result(check.lines)
         else
           -- insertion from the side can be terminal
           if target.direction~=dir then
             local turn = false
-            -- belts can be curves, anything else must side load
+            -- belts can be curves, anything else must side load and thus is terminal
             if target.type=='transport-belt' then
+              ---Is there a belt feeding into the start or other side of the target belt?
               local belt_behind_target = false
-              -- find a belt-like entity behind the target or on the far side
-              local tpxd,tpyd=rotate_pos(0,1,target.direction)
-              local pxd, pyd =rotate_pos(0,-2,dir)
+              local tpxd,tpyd=rotate_pos({0,1},target.direction)
+              local pxd, pyd =rotate_pos({0,-2},dir)
               local bpd = {
                 {pos={target.position.x+tpxd,target.position.y+tpyd},dir=target.direction},
                 {pos={pos.x+pxd,pos.y+pyd},dir=(dir+4)%8}
@@ -171,7 +227,7 @@ local function terminal_belt_lines(args)
               end
               if not belt_behind_target then
                 turn = true
-                if not global.curve_belts[target.position.y] then global.curve_belts[target.position.y]={} end
+                if not global.curve_belts[target.position.y] then global.curve_belts[target.position.y]={}--[[@as CurveBelts]] end
                 global.curve_belts[target.position.y][target.position.x] = ((target.direction-dir+8)%8==2) and "right" or "left"
               end
             end
@@ -198,6 +254,7 @@ local function cleartermbelt(x,y)
       -- debug("and your little dog, too")
       global.terminal_belts[y][x].indicator.destroy()
     end
+    foo = global.terminal_belts[y][x]
     global.terminal_belts[y][x] = nil
   end
 end
@@ -271,7 +328,7 @@ local function onTick(event)
                   if (line%2)==0 then dx = dx + 0.23 else dx = dx - 0.23 end
                 end
                 -- rotate the coordinate deltas
-                local rpx,rpy = rotate_pos(dx,dy,dir)
+                local rpx,rpy = rotate_pos({dx,dy},dir)
                 local spill_pos = {x + rpx, y + rpy}
                 local itemstack = {name=item_name, count=1}
                 -- if e.surface.find_entity("item-on-ground", spill_pos) then
@@ -296,24 +353,35 @@ local function onTick(event)
   end
 end
 
+---Create an indicator entity to render above a given entity, if the indicator option is enabled
+---@param entity BeltLikeEntity The entity to create an indicator above
+---@return LuaEntity|nil The created indicator entity, or nil if none was created
 local function create_indicator(entity)
   if settings.global['belt_overflow_draw_indicators'].value then
-    local indicator_variant = ""
+    local indicator_entity_name = "belt-overflow-indicator"
     if entity.type == "splitter" then
       if (entity.direction%4)==0 then
-        indicator_variant = "-wide"
+        indicator_entity_name = indicator_entity_name .. "-wide"
       else
-        indicator_variant = "-tall"
+        indicator_entity_name = indicator_entity_name .. "-tall"
       end
     end
     return entity.surface.create_entity{
-              name = "belt-overflow-indicator" .. indicator_variant,
+              name = indicator_entity_name,
               position = entity.position
             }
   end
   return nil
 end
 
+---@class check_and_update_param
+---@field entity BeltLikeEntity
+
+---@class check_and_update_entity_param:check_and_update_param
+---@field entity_to_ignore? BeltLikeEntity An entity that should be ignored while checking, probably because it's being deleted
+
+---Evaluate a belt-like entity and cache or un-cache it as terminal as appropriate
+---@param args check_and_update_entity_param
 local function check_and_update_entity(args)
   local entity = args.entity
   local entity_to_ignore = args.entity_to_ignore
@@ -361,9 +429,17 @@ local function check_and_update_posd(posd,surface,entity_to_ignore)
   end
 end
 
+
+---@class check_and_update_neighborhood_param:check_and_update_param
+---@field removal boolean Is the entity being checked because it's being removed?
+
+---Evaluate a neighborhood of belt-like entities and cache or un-cache them as terminal as appropriate
+---@param args check_and_update_neighborhood_param
 local function check_and_update_neighborhood(args)
   local entity = args.entity
   local removal = args.removal
+  ---Relative location and direction of neighbors that could be affected by a change to an entity
+  ---@type POSD[]
   local hood -- list of {dx,dy,dir} for a north-facing entity
   if entity.type == "transport-belt" then
     hood = {

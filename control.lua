@@ -1,10 +1,10 @@
 local util = require("util")
 
----@alias BeltLikeEntity LuaEntity.TransportBelt|LuaEntity.UndergroundBelt|LuaEntity.Splitter|LuaEntity.TransportBeltConnectable|LuaEntity.Ghost
+---@alias BeltLikeEntity LuaEntity.TransportBelt|LuaEntity.UndergroundBelt|LuaEntity.Splitter|LuaEntity.LinkedBelt|LuaEntity.TransportBeltConnectable|LuaEntity.Ghost
 
 ---@class TerminalBelt
 ---@field indicator? LuaEntity UI indicator rendered on top of a belt
----@field entity BeltLikeEntity The belt, underground, or splitter that might be terminal
+---@field entity BeltLikeEntity The entity that might be terminal
 ---@field lines integer[] The indices of the transport lines of this belt that might be terminal
 
 ---@class Array2D<T>: { [number]: { [number]: T } }
@@ -30,11 +30,16 @@ local polling_cycles = math.floor(60 / settings.global['belt_overflow_poll_frequ
 -- local polling_remainder = math.random(polling_cycles)-1
 local polling_remainder = 23 % polling_cycles
 
-
 ---@param entity LuaEntity.UndergroundBelt
 ---@return boolean
 local function has_real_underground_neighbours(entity)
-  return entity and entity.valid and entity.neighbours and entity.neighbours.type ~= 'entity-ghost'
+  return entity and entity.valid and (entity.neighbours ~= nil) and entity.neighbours.type ~= 'entity-ghost'
+end
+
+---@param entity LuaEntity.LinkedBelt
+---@return boolean
+local function has_real_linked_neighbours(entity)
+  return entity and entity.valid and (entity.linked_belt_neighbour ~= nil) and entity.linked_belt_neighbour.type ~= 'entity-ghost'
 end
 
 ---North=0, East=90 degrees clockwi se, South=180, West=270
@@ -111,6 +116,15 @@ local function find_belt_at(surface,pos,ghosts)
     targets = (find_ghost_entities_filtered(surface, param))--[[@as LuaEntity.Ghost]]
     if targets[1] then return targets[1] end
   end
+  param.type = "linked-belt"
+  targets = (surface.find_entities_filtered(param))--[[@as LuaEntity.LinkedBelt]]
+  if targets[1] then
+    return targets[1]
+  end
+  if ghosts then
+    targets = (find_ghost_entities_filtered(surface, param))--[[@as LuaEntity.Ghost]]
+    if targets[1] then return targets[1] end
+  end
   param.radius = nil
   param.type = "splitter"
   targets = (surface.find_entities_filtered(param))--[[@as LuaEntity.Splitter]]
@@ -137,7 +151,18 @@ local function terminal_belt_lines(args)
       -- underground input can't be terminal if the output exists and isn't being removed
       return {}
     else
+      -- and is always terminal if it has no output
       return {1, 2, 3, 4}
+    end
+  end
+  if entity_type == "linked-belt" and
+    entity.linked_belt_type == "input" then
+    if has_real_linked_neighbours(entity--[[@as LuaEntity.LinkedBelt]]) and entity.linked_belt_neighbour ~= entity_to_ignore then
+      -- linked input can't be terminal if the output exists and isn't being removed
+      return {}
+    else
+      -- and is always terminal if it has no output
+      return {1, 2}
     end
   end
   ---@type DirectionInteger
@@ -198,10 +223,10 @@ local function terminal_belt_lines(args)
         -- nothing accepts connections from the front
         elseif math.abs(target_direction - entity_direction)==4 then
           result(check_lines)
-        -- underground belt outputs don't accept connections from behind
-        elseif target.type=="underground-belt" and
-          target.belt_to_ground_type=="output" and
-          target_direction==entity_direction then
+        -- outputs don't accept connections from behind
+        elseif ((target.type=="underground-belt" and target.belt_to_ground_type=="output")
+          or (target.type=="linked-belt" and target.linked_belt_type=="output"))
+          and target_direction==entity_direction then
           result(check_lines)
         -- splitters don't accept connections from the side or front
         elseif target.type=="splitter" and target_direction~=entity_direction then
@@ -211,6 +236,7 @@ local function terminal_belt_lines(args)
           if target_direction~=entity_direction then
             local turn = false
             -- belts can be curves, anything else must side load and thus is terminal
+            -- TODO use new LuaEntity.belt_shape https://lua-api.factorio.com/latest/classes/LuaEntity.html#belt_shape
             if target.type=='transport-belt' then
               ---Is there a belt feeding into the start or other side of the target belt?
               local belt_behind_target = false
@@ -226,8 +252,11 @@ local function terminal_belt_lines(args)
                 -- debug("checking for belt-behind at "..pos2s(bpos.pos).." dir="..bpos.dir)
                 local candidate = find_belt_at(entity.surface, bpos.pos, true)
                 if candidate ~= nil and candidate ~= entity_to_ignore then
-                  -- underground inputs don't cause T junctions when pointed at transport belts
-                  if not ((candidate.type == "underground-belt" or (candidate.type == "entity-ghost" and candidate.ghost_type == "underground-belt")) and candidate.belt_to_ground_type == "input") then
+                  -- inputs don't cause T junctions when pointed at transport belts
+                  if not (
+                    ((candidate.type == "underground-belt" or (candidate.type == "entity-ghost" and candidate.ghost_type == "underground-belt")) and candidate.belt_to_ground_type == "input") or
+                    ((candidate.type == "linked-belt"      or (candidate.type == "entity-ghost" and candidate.ghost_type == "linked-belt"     )) and candidate.linked_belt_type    == "input")
+                  ) then
                     -- debug("candidate "..candidate.type.." ".."dir="..candidate.direction)
                     if candidate.direction == bpos.dir then
                       -- debug("yep")
@@ -284,7 +313,7 @@ end
 
 ---@alias LineCaps (integer?)[]
 ---@type { [string]: LineCaps }
-local line_caps = {curve_right={5,2},curve_left={2,5},straight={4,4},underground={2,2,4,4},splitter={nil,nil,nil,nil,2,2,2,2}}
+local line_caps = {curve_right={5,2},curve_left={2,5},straight={4,4},underground={2,2,4,4},linked={2,2},splitter={nil,nil,nil,nil,2,2,2,2}}
 
 ---@param event EventData.on_tick
 local function onTick(event)
@@ -308,6 +337,8 @@ local function onTick(event)
             end
           elseif entity.type=="underground-belt" then
             caps=line_caps.underground
+          elseif entity.type=="linked-belt" then
+            caps=line_caps.linked
           elseif entity.type=="splitter" then
             caps=line_caps.splitter
           end
@@ -339,8 +370,10 @@ local function onTick(event)
                 local x,y = pos.x,pos.y
                 local dir = entity.direction
                 local dx,dy = 0,0
-                if entity.type=="underground-belt" and entity.belt_to_ground_type=="input" then
-                  -- spill beside the underground input
+                if (entity.type=="underground-belt" and entity.belt_to_ground_type=="input") or
+                  ( entity.type=="linked-belt"      and entity.linked_belt_type   =="input")
+                  then
+                  -- spill beside the input
                   dy = dy + 0.25
                   if (line%2)==0 then
                     dx = dx + 0.65
@@ -423,7 +456,7 @@ local function check_and_update_entity(args)
         global.terminal_belts[pos.y][pos.x] = {
           entity = entity,
           lines = t,
-          indicator = create_indicator(entity)
+          indicator = create_indicator(entity),
         }
       else
         global.terminal_belts[pos.y][pos.x].entity = entity
@@ -452,6 +485,7 @@ local function check_and_update_posd(posd,surface,entity_to_ignore)
     if candidate.valid then
       if candidate.type == "transport-belt" or
         candidate.type == "underground-belt" or
+        candidate.type == "linked-belt" or
         candidate.type == "splitter" then
         if candidate.direction == posd.d then
           if candidate ~= entity_to_ignore then
@@ -516,6 +550,15 @@ local function check_and_update_neighborhood(args)
     if has_real_underground_neighbours(entity--[[@as LuaEntity.UndergroundBelt]]) then
       check_and_update_entity{entity=entity.neighbours--[[@as LuaEntity.UndergroundBelt]],entity_to_ignore=removal and entity or nil}
     end
+  elseif entity.type == "linked-belt" then
+    if entity.linked_belt_type == "input" then
+      neighborhood = neighborhoods.input
+    else
+      neighborhood = neighborhoods.output
+    end
+    if has_real_linked_neighbours(entity--[[@as LuaEntity.LinkedBelt]]) then
+      check_and_update_entity{entity=entity.neighbours--[[@as LuaEntity.LinkedBelt]],entity_to_ignore=removal and entity or nil}
+    end
   elseif entity.type == "splitter" then
     neighborhood = neighborhoods.splitter
   end
@@ -533,11 +576,11 @@ end
 ---@param args params_entity_removal
 local function onModifyEntity(args)
   local entity=args.entity
-  local removal=args.removal
   if entity.type=="transport-belt" or
     entity.type=="underground-belt" or
+    entity.type=="linked-belt" or
     entity.type=="splitter" then
-    check_and_update_neighborhood{entity=entity,removal=removal}
+    check_and_update_neighborhood(args)
   end
 end
 
@@ -590,7 +633,7 @@ local function refreshData()
   global.curve_belts = global.curve_belts
   global.terminal_belts = global.terminal_belts
   -- find all terminal belts
-  for _,type in pairs({"transport-belt","underground-belt","splitter"}) do
+  for _,type in pairs({"transport-belt","underground-belt","linked-belt","splitter"}) do
     for _,e in pairs((find_all_entities{type=type})--[=[@as BeltLikeEntity[]]=]) do
       check_and_update_entity{entity=e}
     end

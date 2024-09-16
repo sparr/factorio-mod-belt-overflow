@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.2.1
+Date: 2024-09-16
+  Bugfixes:
+    - Another underground belt ghost crash
+    - Accidentally disabled removing items being spilled in last update
+---------------------------------------------------------------------------------------------------
 Version: 1.2.0
 Date: 2024-09-15
   Changes:

@@ -227,7 +227,7 @@ local function terminal_belt_lines(args)
                 local candidate = find_belt_at(entity.surface, bpos.pos, true)
                 if candidate ~= nil and candidate ~= entity_to_ignore then
                   -- underground inputs don't cause T junctions when pointed at transport belts
-                  if not ((candidate.type == "underground-belt" or candidate.ghost_type == "underground-belt") and candidate.belt_to_ground_type == "input") then
+                  if not ((candidate.type == "underground-belt" or (candidate.type == "entity-ghost" and candidate.ghost_type == "underground-belt")) and candidate.belt_to_ground_type == "input") then
                     -- debug("candidate "..candidate.type.." ".."dir="..candidate.direction)
                     if candidate.direction == bpos.dir then
                       -- debug("yep")
@@ -368,11 +368,11 @@ local function onTick(event)
                 --     position=spill_pos, force=e.force,
                 --     stack={name=item_name, count=1}}
                 -- end
-                -- if tl.remove_item(itemstack)==0 then
+                if tl.remove_item(itemstack)==0 then
                 --   -- debug("belt-overflow failed to remove "..item_name)
-                -- else
+                else
                 --   -- debug("removed "..item_name.." at "..pos2s(pos))
-                -- end
+                end
               end
             end
           end

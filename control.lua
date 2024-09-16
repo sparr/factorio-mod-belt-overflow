@@ -1,17 +1,16 @@
-local mod_version="0.17.0"
-local mod_data_version="0.13.0"
+local util = require("util")
 
----@alias BeltLikeEntity LuaEntity.TransportBelt|LuaEntity.UndergroundBelt|LuaEntity.Splitter|LuaEntity.base
+---@alias BeltLikeEntity LuaEntity.TransportBelt|LuaEntity.UndergroundBelt|LuaEntity.Splitter|LuaEntity.TransportBeltConnectable|LuaEntity.Ghost
 
 ---@class TerminalBelt
 ---@field indicator? LuaEntity UI indicator rendered on top of a belt
 ---@field entity BeltLikeEntity The belt, underground, or splitter that might be terminal
 ---@field lines integer[] The indices of the transport lines of this belt that might be terminal
 
----@generic T
----@alias Array2D table<number, table<number, T>>
+---@class Array2D<T>: { [number]: { [number]: T } }
 
----@alias Direction defines.direction|integer
+---For performing arithmetic on directions
+---@alias DirectionInteger defines.direction|integer
 
 ---@type {}
 global=global
@@ -31,44 +30,22 @@ local polling_cycles = math.floor(60 / settings.global['belt_overflow_poll_frequ
 -- local polling_remainder = math.random(polling_cycles)-1
 local polling_remainder = 23 % polling_cycles
 
--- local debugnum = 0
--- local function debug(...)
---   if game and game.players[1] then
---     game.players[1].print("DEBUG " .. debugnum .. " " .. game.tick .. ": " .. serpent.line(...,{comment=false}))
---     debugnum = debugnum + 1
---   end
--- end
 
--- local function pos2s(pos)
---   if pos.x then
---     return pos.x..','..pos.y
---   elseif pos[1] then
---     return pos[1]..','..pos[2]
---   end
---   return ''
--- end
-
--- local function lines2s(lines)
---   out = '['
---   for k,v in pairs(lines) do
---     out = out .. v .. ','
---   end
---   out = out .. ']'
---   return out
--- end
-
----@param entity BeltLikeEntity
+---@param entity LuaEntity.UndergroundBelt
 ---@return boolean
-local function has_neighbours(entity)
-  return not (entity == nil or entity.neighbours == nil or (#entity.neighbours == 0 and not entity.valid))
+local function has_real_underground_neighbours(entity)
+  return entity and entity.valid and entity.neighbours and entity.neighbours.type ~= 'entity-ghost'
 end
 
----@class POSD
----@field pos Vector
----@field d Direction
+---North=0, East=90 degrees clockwi se, South=180, West=270
+---@alias Rotation DirectionInteger
 
----North=0, East=90 degrees clockwise, South=180, West=270
----@alias Rotation Direction
+---@class (exact) POSD
+---@field pos Vector
+---@field d DirectionInteger
+
+local defines_direction = defines.direction
+local N, E, S, W = defines_direction.north, defines_direction.east, defines_direction.south, defines_direction.west
 
 ---Rotates a POSD around the origin by the given amount
 ---@param posd POSD
@@ -76,13 +53,15 @@ end
 ---@return POSD
 local function rotate_posd(posd,rotation)
   local x,y,d = posd.pos[1],posd.pos[2],posd.d
-  if     rotation == defines.direction.south then
+  if     rotation == S then
     d = (d + 4) % 8
     x, y = -x, -y
-  elseif rotation == defines.direction.east then
+  elseif rotation == E then
     d = (d + 2) % 8
-    x, y = -y, x -- not sure why luals is complaining about y on the left side being of unknown type
-  elseif rotation == defines.direction.west then
+    ---I don't know why the `y` here intermittently produces a no-unknown violation
+    ---@diagnostic disable-next-line: no-unknown
+    x, y = -y, x
+  elseif rotation == W then
     d = (d + 6) % 8
     x, y = y, -x
   end
@@ -94,69 +73,99 @@ end
 ---@param rotation Rotation
 ---@return POSD
 local function rotate_pos(pos, rotation)
-  return rotate_posd( {pos=pos, d=defines.direction.north}, rotation)
+  return rotate_posd( {pos=pos, d=N}, rotation)
+end
+
+---Takes non-ghost filter params and finds equivalent ghosts
+---@param surface LuaSurface
+---@param param LuaSurface.find_entities_filtered_param
+local function find_ghost_entities_filtered(surface, param)
+  new_param = util.table.deepcopy(param)
+  new_param.ghost_name = new_param.name
+  new_param.ghost_type = new_param.type
+  new_param.name = "entity-ghost"
+  new_param.type = "entity-ghost"
+  -- TODO support collision_mask filter by looking up the prototype for the ghost_name  
+  return surface.find_entities_filtered(new_param)
 end
 
 ---@param surface LuaSurface
 ---@param pos Vector
----@return BeltLikeEntity|nil
-local function find_belt_at(surface,pos)
-  local targets = surface.find_entities_filtered{position=pos, type="transport-belt"}
-  if targets[1] == nil then
-    targets = surface.find_entities_filtered{position=pos, type="underground-belt"}
+---@param ghosts boolean
+---@return BeltLikeEntity?
+local function find_belt_at(surface,pos,ghosts)
+  ---@type LuaSurface.find_entities_filtered_param
+  local param = {position=pos, radius=0, type="transport-belt"}
+  ---@type BeltLikeEntity
+  local targets
+  targets = (surface.find_entities_filtered(param))--[[@as LuaEntity.TransportBelt]]
+  if targets[1] then return targets[1] end
+  if ghosts then
+    targets = (find_ghost_entities_filtered(surface, param))--[[@as LuaEntity.Ghost]]
+    if targets[1] then return targets[1] end
   end
-  if targets[1] == nil then
-    targets = surface.find_entities_filtered{position=pos, type="splitter"}
+  param.type = "underground-belt"
+  targets = (surface.find_entities_filtered(param))--[[@as LuaEntity.UndergroundBelt]]
+  if targets[1] then return targets[1] end
+  if ghosts then
+    targets = (find_ghost_entities_filtered(surface, param))--[[@as LuaEntity.Ghost]]
+    if targets[1] then return targets[1] end
   end
-  if targets[1] == nil then
-    return nil
-  else
-    return targets[1]
+  param.radius = nil
+  param.type = "splitter"
+  targets = (surface.find_entities_filtered(param))--[[@as LuaEntity.Splitter]]
+  if targets[1] then return targets[1] end
+  if ghosts then
+    targets = (find_ghost_entities_filtered(surface, param))--[[@as LuaEntity.Ghost]]
+    if targets[1] then return targets[1] end
   end
+  return nil
 end
 
 
----Identify which transport lines on a BeltLikeEntity are(?) terminal
+---Identify which transport lines on a BeltLikeEntity are potentially terminal
 ---@param args check_and_update_entity_param
 ---@return integer[] lines Indices of the terminal belt lines
 local function terminal_belt_lines(args)
   local entity = args.entity
   local entity_to_ignore = args.entity_to_ignore
+  local entity_type = entity.type
   if entity == entity_to_ignore then return {} end
-  if entity.type == "underground-belt" and
+  if entity_type == "underground-belt" and
     entity.belt_to_ground_type == "input" then
-    if has_neighbours(entity) and entity.neighbours ~= entity_to_ignore then
+    if has_real_underground_neighbours(entity--[[@as LuaEntity.UndergroundBelt]]) and entity.neighbours ~= entity_to_ignore then
       -- underground input can't be terminal if the output exists and isn't being removed
       return {}
     else
       return {1, 2, 3, 4}
     end
   end
-  ---@type Direction
-  local dir = entity.direction
+  ---@type DirectionInteger
+  local entity_direction = entity.direction
   ---@type Vector
-  local pos = entity.position
+  local entity_position = entity.position
+  local entity_position_x, entity_position_y = entity_position.x, entity_position.y
   -- debug(dir)
   -- debug(pos)
-  pos[1] = pos.x
-  pos[2] = pos.y
+  entity_position[1] = entity_position_x
+  entity_position[2] = entity_position_y
   ---The position(s) and line indices to check for terminal-ness on this entity
   ---@type { pos: Vector, lines: integer[] }[]
   local to_check = {}
-  if entity.type=="splitter" then
+  if entity_type=="splitter" then
     -- the center of a splitter is half a tile off from the center of either of its two tiles we might be checking
-    local rotated = rotate_pos({-0.5,0},dir)
+    local rotated = rotate_pos({-0.5,0},entity_direction)
     local dx,dy = rotated.pos[1], rotated.pos[2]
     to_check = {
-      {pos={pos.x+dx,pos.y+dy},lines={5,6}},
-      {pos={pos.x-dx,pos.y-dy},lines={7,8}}
+      {pos={entity_position_x+dx,entity_position_y+dy},lines={5,6}},
+      {pos={entity_position_x-dx,entity_position_y-dy},lines={7,8}}
     }
-  elseif entity.type=="underground-belt" and
+  elseif entity_type=="underground-belt" and
     entity.belt_to_ground_type=="input" then
     -- TODO this might be redundant with early returns above, and might be wrong. investigate.
-    to_check = {{pos=pos,lines={3,4}}}
+    to_check = {{pos=entity_position,lines={3,4}}}
   else
-    to_check = {{pos=pos,lines={1,2}}}
+    to_check = {{pos=entity_position,lines={1,2}}}
   end
   if #to_check>0 then
     ---The line indices identified as terminal
@@ -172,49 +181,53 @@ local function terminal_belt_lines(args)
     -- following code originally copied from https://github.com/sparr/factorio-mod-belt-combinators
     for _,check in pairs(to_check) do
       -- debug("checking "..pos2s(check.pos))
-      local rotated = rotate_pos({0,-1},dir)
+      local rotated = rotate_pos({0,-1},entity_direction)
       local dx,dy = rotated.pos[1], rotated.pos[2]
       ---@type Vector
-      local targetpos = {check.pos[1]+dx,check.pos[2]+dy}
+      local target_position = {check.pos[1]+dx,check.pos[2]+dy}
       -- debug("tpos "..pos2s(tpos))
-      local target = find_belt_at(entity.surface, targetpos)
+      local target = find_belt_at(entity.surface, target_position, false)
       -- debug("target "..serpent.line(target))
       if target ~= nil and target ~= entity_to_ignore then
         -- debug("target found " .. target.type)
+        local check_lines = check.lines
+        local target_direction = target.direction
         -- fast belts can overflow onto slow belts
         if entity.prototype.belt_speed > target.prototype.belt_speed then
-          result(check.lines)
+          result(check_lines)
         -- nothing accepts connections from the front
-        elseif math.abs(target.direction - dir)==4 then
-          result(check.lines)
+        elseif math.abs(target_direction - entity_direction)==4 then
+          result(check_lines)
         -- underground belt outputs don't accept connections from behind
         elseif target.type=="underground-belt" and
           target.belt_to_ground_type=="output" and
-          target.direction==dir then
-          result(check.lines)
+          target_direction==entity_direction then
+          result(check_lines)
         -- splitters don't accept connections from the side or front
-        elseif target.type=="splitter" and target.direction~=dir then
-          result(check.lines)
+        elseif target.type=="splitter" and target_direction~=entity_direction then
+          result(check_lines)
         else
           -- insertion from the side can be terminal
-          if target.direction~=dir then
+          if target_direction~=entity_direction then
             local turn = false
             -- belts can be curves, anything else must side load and thus is terminal
             if target.type=='transport-belt' then
               ---Is there a belt feeding into the start or other side of the target belt?
               local belt_behind_target = false
-              local tpxd,tpyd=rotate_pos({0,1},target.direction)
-              local pxd, pyd =rotate_pos({0,-2},dir)
+              rotated = rotate_pos({0,1},target_direction)
+              local tpxd,tpyd=rotated.pos[1], rotated.pos[2]
+              rotated = rotate_pos({0,-2},entity_direction)
+              local pxd, pyd =rotated.pos[1], rotated.pos[2]
               local bpd = {
-                {pos={target.position.x+tpxd,target.position.y+tpyd},dir=target.direction},
-                {pos={pos.x+pxd,pos.y+pyd},dir=(dir+4)%8}
+                {pos={target.position.x+tpxd,target.position.y+tpyd},dir=target_direction},
+                {pos={entity_position_x+pxd,entity_position_y+pyd},dir=(entity_direction+4)%8}
               }
               for _,bpos in pairs(bpd) do
                 -- debug("checking for belt-behind at "..pos2s(bpos.pos).." dir="..bpos.dir)
-                local candidate = find_belt_at(entity.surface, bpos.pos)
+                local candidate = find_belt_at(entity.surface, bpos.pos, true)
                 if candidate ~= nil and candidate ~= entity_to_ignore then
                   -- underground inputs don't cause T junctions when pointed at transport belts
-                  if not (candidate.type == "underground-belt" and candidate.belt_to_ground_type == "input") then
+                  if not ((candidate.type == "underground-belt" or candidate.ghost_type == "underground-belt") and candidate.belt_to_ground_type == "input") then
                     -- debug("candidate "..candidate.type.." ".."dir="..candidate.direction)
                     if candidate.direction == bpos.dir then
                       -- debug("yep")
@@ -225,10 +238,18 @@ local function terminal_belt_lines(args)
                 end
                 if belt_behind_target then break end
               end
-              if not belt_behind_target then
+              if belt_behind_target then
+                -- target belt doesn't curve
+                if global.curve_belts[target.position.y] and global.curve_belts[target.position.y][target.position.x] then
+                  global.curve_belts[target.position.y][target.position.x] = nil
+                  if next(global.curve_belts[target.position.y]) == nil then
+                    global.curve_belts[target.position.y] = nil
+                  end
+                end
+              else
                 turn = true
-                if not global.curve_belts[target.position.y] then global.curve_belts[target.position.y]={}--[[@as CurveBelts]] end
-                global.curve_belts[target.position.y][target.position.x] = ((target.direction-dir+8)%8==2) and "right" or "left"
+                if not global.curve_belts[target.position.y] then global.curve_belts[target.position.y]={} end
+                global.curve_belts[target.position.y][target.position.x] = ((target_direction-entity_direction+8)%8==2) and "right" or "left"
               end
             end
             if not turn then
@@ -241,7 +262,7 @@ local function terminal_belt_lines(args)
       end
     end
     -- splitters can't be just half-terminal
-    if entity.type=="splitter" and #result_lines>0 then return {5,6,7,8} end
+    if entity_type=="splitter" and #result_lines>0 then return {5,6,7,8} end
     return result_lines
   end
   return {}
@@ -254,25 +275,30 @@ local function cleartermbelt(x,y)
       -- debug("and your little dog, too")
       global.terminal_belts[y][x].indicator.destroy()
     end
-    foo = global.terminal_belts[y][x]
     global.terminal_belts[y][x] = nil
+    if next(global.terminal_belts[y]) == nil then
+      global.terminal_belts[y] = nil
+    end
   end
 end
 
-local line_caps = {curve_right={5,2},curve_left={2,5},straight={4,4},ground={2,2,4,4},splitter={nil,nil,nil,nil,2,2,2,2}}
+---@alias LineCaps (integer?)[]
+---@type { [string]: LineCaps }
+local line_caps = {curve_right={5,2},curve_left={2,5},straight={4,4},underground={2,2,4,4},splitter={nil,nil,nil,nil,2,2,2,2}}
 
+---@param event EventData.on_tick
 local function onTick(event)
   if event.tick%polling_cycles == polling_remainder then
     for y,row in pairs(global.terminal_belts) do
-      for x,belt in pairs(row) do
+      for x,terminal_belt in pairs(row) do
         -- -- debug(x..','..y)
-        if not belt.entity or not belt.entity.valid then
+        if not terminal_belt.entity or not terminal_belt.entity.valid then
           cleartermbelt(x,y)
         else
-          local e = belt.entity
-          local pos = e.position
-          local caps
-          if e.type=="transport-belt" then
+          local entity = terminal_belt.entity
+          local pos = entity.position
+          local caps --[[@type LineCaps]]
+          if entity.type=="transport-belt" then
             if global.curve_belts[pos.y] and global.curve_belts[pos.y][pos.x]=="right" then
               caps=line_caps.curve_right
             elseif global.curve_belts[pos.y] and global.curve_belts[pos.y][pos.x]=="left" then
@@ -280,28 +306,30 @@ local function onTick(event)
             else
               caps=line_caps.straight
             end
-          elseif e.type=="underground-belt" then
-            caps=line_caps.ground
-          elseif e.type=="splitter" then
+          elseif entity.type=="underground-belt" then
+            caps=line_caps.underground
+          elseif entity.type=="splitter" then
             caps=line_caps.splitter
           end
+          ---
+          ---@type boolean[]
           local ground_prefill = {}
-          for i=1,#belt.lines do
-            local line = belt.lines[i]
+          for i=1,#terminal_belt.lines do
+            local line = terminal_belt.lines[i]
             -- debug(pos2s(pos)..' line '..line..':')
-            local tl = e.get_transport_line(line)
-            local item_name
+            local tl = entity.get_transport_line(line)
+            local item_name --[[@type string]]
             if tl.get_item_count()>=caps[line] then
               item_name = tl[1].name
-              if e.type=="underground-belt" and
-                e.belt_to_ground_type=="input" and
-                has_neighbours(e) and
+              if entity.type=="underground-belt" and
+                entity.belt_to_ground_type=="input" and
+                has_real_underground_neighbours(entity--[[@as LuaEntity.UndergroundBelt]]) and
                 line<3 then
                 -- track this for future reference, but don't overflow here
                 ground_prefill[line]=true
-              elseif e.type=="underground-belt" and
-                e.belt_to_ground_type=="input" and
-                has_neighbours(e) and
+              elseif entity.type=="underground-belt" and
+                entity.belt_to_ground_type=="input" and
+                has_real_underground_neighbours(entity--[[@as LuaEntity.UndergroundBelt]]) and
                 line>2 and not ground_prefill[line-2] then
                 -- do nothing, this won't overflow until the prior line overflows
               else
@@ -309,41 +337,42 @@ local function onTick(event)
                 -- overflow!
                 -- figure out where the overflow spot is
                 local x,y = pos.x,pos.y
-                local dir = e.direction
+                local dir = entity.direction
                 local dx,dy = 0,0
-                if e.type=="underground-belt" and e.belt_to_ground_type=="input" then
+                if entity.type=="underground-belt" and entity.belt_to_ground_type=="input" then
                   -- spill beside the underground input
                   dy = dy + 0.25
                   if (line%2)==0 then
                     dx = dx + 0.65
                   else
                     dx = dx - 0.65
-                 end
+                  end
                 else
                   -- spill past the end of the belt
                   dy = dy - 1.05
-                  if e.type=="splitter" then
+                  if entity.type=="splitter" then
                     if line==5 or line==6 then dx = dx-0.5 else dx = dx+0.5 end
                   end
                   if (line%2)==0 then dx = dx + 0.23 else dx = dx - 0.23 end
                 end
                 -- rotate the coordinate deltas
-                local rpx,rpy = rotate_pos({dx,dy},dir)
+                local rotated = rotate_pos({dx,dy},dir)
+                local rpx,rpy = rotated.pos[1], rotated.pos[2]
                 local spill_pos = {x + rpx, y + rpy}
                 local itemstack = {name=item_name, count=1}
                 -- if e.surface.find_entity("item-on-ground", spill_pos) then
-                  e.surface.spill_item_stack(spill_pos, itemstack)
+                  entity.surface.spill_item_stack(spill_pos, itemstack)
                 -- disabled this condition for performance reasons
                 -- else -- spill always skips the target spot, fill it first
                 --   e.surface.create_entity{name="item-on-ground",
                 --     position=spill_pos, force=e.force,
                 --     stack={name=item_name, count=1}}
                 -- end
-                if tl.remove_item(itemstack)==0 then
-                  -- debug("belt-overflow failed to remove "..item_name)
-                else
-                  -- debug("removed "..item_name.." at "..pos2s(pos))
-                end
+                -- if tl.remove_item(itemstack)==0 then
+                --   -- debug("belt-overflow failed to remove "..item_name)
+                -- else
+                --   -- debug("removed "..item_name.." at "..pos2s(pos))
+                -- end
               end
             end
           end
@@ -374,11 +403,11 @@ local function create_indicator(entity)
   return nil
 end
 
----@class check_and_update_param
----@field entity BeltLikeEntity
-
----@class check_and_update_entity_param:check_and_update_param
+---@class EntityToIgnore
 ---@field entity_to_ignore? BeltLikeEntity An entity that should be ignored while checking, probably because it's being deleted
+
+---@class check_and_update_entity_param:EntityToIgnore
+---@field entity BeltLikeEntity
 
 ---Evaluate a belt-like entity and cache or un-cache it as terminal as appropriate
 ---@param args check_and_update_entity_param
@@ -411,17 +440,22 @@ local function check_and_update_entity(args)
   end
 end
 
+---Evaluate a belt-like entity at a given POSD and cache or un-cache it as terminal as appropriate
+---@param posd POSD
+---@param surface LuaSurface
+---@param entity_to_ignore BeltLikeEntity?
 local function check_and_update_posd(posd,surface,entity_to_ignore)
-  local box = {{posd[1]-0.5,posd[2]-0.5},{posd[1]+0.5,posd[2]+0.5}}
+  local x, y = posd.pos[1], posd.pos[2]
+  local box = {{x-0.5,y-0.5},{x+0.5,y+0.5}}
   local candidates = surface.find_entities(box)
   for _,candidate in pairs(candidates) do
     if candidate.valid then
       if candidate.type == "transport-belt" or
         candidate.type == "underground-belt" or
         candidate.type == "splitter" then
-        if candidate.direction == posd[3] then
+        if candidate.direction == posd.d then
           if candidate ~= entity_to_ignore then
-            check_and_update_entity{entity=candidate,entity_to_ignore=entity_to_ignore}
+            check_and_update_entity{entity=candidate--[[@as BeltLikeEntity]],entity_to_ignore=entity_to_ignore}
           end
         end
       end
@@ -430,60 +464,73 @@ local function check_and_update_posd(posd,surface,entity_to_ignore)
 end
 
 
----@class check_and_update_neighborhood_param:check_and_update_param
+---@class params_entity_removal
+---@field entity BeltLikeEntity The entity to check the neighbors of
 ---@field removal boolean Is the entity being checked because it's being removed?
 
+---@alias Neighborhood POSD[]
+
+---Relative location and direction of neighbors that could be affected by a change to an entity
+---Relative direction assumes the origin entity is pointing north
+---@type { [string]: Neighborhood }
+local neighborhoods = {
+  belt = {
+    {pos={0,0},d=N}, -- check this entity itself
+    {pos={-1,0},d=E},{pos={1,0},d=W}, -- left and right sides can change if they point at this belt
+    {pos={0,1},d=N}, -- ditto behind
+    {pos={-1,-1},d=E},{pos={1,-1},d=W}, -- ahead and left/right can change if they point at the same belt as this does
+    {pos={0,-2},d=S} -- and so can two-ahead
+  },
+  input = {
+    {pos={0,0},d=N}, -- check this entity itself
+    {pos={0,1},d=N}  -- and the entity behind it
+  },
+  output = {
+    {pos={0,0},d=N}, -- check this entity itself
+    {pos={-1,-1},d=E},{pos={1,-1},d=W}, -- ahead and left/right can change if they point at the same belt as this does
+    {pos={0,-2},d=S} -- and so can two-ahead
+  },
+  splitter = {
+    {pos={0,0},d=N}, -- check this entity itself
+    {pos={-0.5,1},d=N},{pos={0.5,1},d=N}, -- behinds can change if they point at this splitter
+    {pos={-1.5,-1},d=E},{pos={1.5,-1},d=W}, -- aheads and left/right can change if they point at the same belt as this does
+    {pos={-0.5,-2},d=S},{pos={0.5,-2},d=S} -- and so can two-aheads
+  }
+}
+
 ---Evaluate a neighborhood of belt-like entities and cache or un-cache them as terminal as appropriate
----@param args check_and_update_neighborhood_param
+---@param args params_entity_removal
 local function check_and_update_neighborhood(args)
   local entity = args.entity
   local removal = args.removal
-  ---Relative location and direction of neighbors that could be affected by a change to an entity
-  ---@type POSD[]
-  local hood -- list of {dx,dy,dir} for a north-facing entity
+  ---@type Neighborhood
+  local neighborhood
   if entity.type == "transport-belt" then
-    hood = {
-      {0,0,0}, -- check this entity itself
-      {-1,0,2},{1,0,6}, -- left and right sides can change if they point at this belt
-      {0,1,0}, -- ditto behind
-      {-1,-1,2},{1,-1,6}, -- ahead and left/right can change if they point at the same belt as this does
-      {0,-2,4} -- and so can two-ahead
-    }
+    neighborhood = neighborhoods.belt
   elseif entity.type == "underground-belt" then
     if entity.belt_to_ground_type == "input" then
-      hood = {
-        {0,0,0}, -- check this entity itself
-        {0,1,0}  -- and the entity behind it
-      }
+      neighborhood = neighborhoods.input
     else
-      hood = {
-        {0,0,0}, -- check this entity itself
-        {-1,-1,2},{1,-1,6}, -- ahead and left/right can change if they point at the same belt as this does
-        {0,-2,4} -- and so can two-ahead
-      }
+      neighborhood = neighborhoods.output
     end
-    if has_neighbours(entity) then
-      check_and_update_entity{entity=entity.neighbours,entity_to_ignore=removal and entity or nil}
+    if has_real_underground_neighbours(entity--[[@as LuaEntity.UndergroundBelt]]) then
+      check_and_update_entity{entity=entity.neighbours--[[@as LuaEntity.UndergroundBelt]],entity_to_ignore=removal and entity or nil}
     end
   elseif entity.type == "splitter" then
-    hood = {
-      {0,0,0}, -- check this entity itself
-      {-0.5,1,0},{0.5,1,0}, -- behinds can change if they point at this splitter
-      {-1.5,-1,2},{1.5,-1,6}, -- aheads and left/right can change if they point at the same belt as this does
-      {-0.5,-2,4},{0.5,-2,4} -- and so can two-aheads
-    }
+    neighborhood = neighborhoods.splitter
   end
-  for _,posd in pairs(hood) do
-    posd = {rotate_posd(posd,entity.direction)}
+  for _,posd in pairs(neighborhood) do
+    posd = rotate_posd(posd,entity.direction)
     if removal and posd[1]==0 and posd[2]==0 then
       -- skip checking the to-be-removed element itself
     else
-      check_and_update_posd({entity.position.x+posd[1],entity.position.y+posd[2],posd[3]},entity.surface,removal and entity or nil)
+      check_and_update_posd({pos={entity.position.x+posd.pos[1],entity.position.y+posd.pos[2]},d=posd.d},entity.surface,removal and entity or nil)
     end
   end
   if removal then cleartermbelt(entity.position.x,entity.position.y) end
 end
 
+---@param args params_entity_removal
 local function onModifyEntity(args)
   local entity=args.entity
   local removal=args.removal
@@ -502,8 +549,12 @@ local function onRemoveEntity(event)
   onModifyEntity{entity=event.entity, removal=true}
 end
 
--- thanks to KeyboardHack on irc.freenode.net #factorio for this function
+---Use find_entities_filtered across all chunks in all surfaces
+---Thanks to KeyboardHack on irc.freenode.net #factorio for this function
+---@param args LuaSurface.find_entities_filtered_param
+---@return LuaEntity[] entites
 local function find_all_entities(args)
+  ---@type LuaEntity[]
   local entities = {}
   for _,surface in pairs(game.surfaces) do
     for chunk in surface.get_chunks() do
@@ -540,20 +591,9 @@ local function refreshData()
   global.terminal_belts = global.terminal_belts
   -- find all terminal belts
   for _,type in pairs({"transport-belt","underground-belt","splitter"}) do
-    for _,e in pairs(find_all_entities{type=type}) do
+    for _,e in pairs((find_all_entities{type=type})--[=[@as BeltLikeEntity[]]=]) do
       check_and_update_entity{entity=e}
     end
-  end
-end
-
-local function checkForMigration(old_version, new_version)
-  -- TODO: when a migration is necessary, trigger it here or set a flag.
-end
-
-local function checkForDataMigration(old_data_version, new_data_version)
-  -- TODO: when a migration is necessary, trigger it here or set a flag.
-  if old_data_version ~= new_data_version then
-    refreshData()
   end
 end
 
@@ -581,19 +621,12 @@ local function updateIndicators()
 end
 
 local function onInit()
-  global.version=mod_version
-  global.data_version=mod_data_version
-
   if global.terminal_belts == nil then
     refreshData()
   end
 end
 
 local function onConfigurationChanged()
-  -- The only reason to have version/data_version is to trigger migrations, so do that here.
-  checkForMigration(global.version, mod_version)
-  checkForDataMigration(global.data_version, mod_data_version)
-
   onInit()
   updateIndicators()
 end
